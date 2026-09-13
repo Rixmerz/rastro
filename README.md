@@ -4,9 +4,31 @@ CLI para navegadores con vista mínima de páginas, resúmenes de efecto por acc
 
 ## El problema
 
-Los agentes IA que navegan hoy reciben bien el árbol de accesibilidad completo (miles de tokens por paso) o solo píxeles. Ninguna herramienta existente (Playwright MCP, Chrome DevTools MCP, agent-browser, Obscura) vincula las acciones del agente a los requests, navegaciones y cambios de estado que causó, en un registro que el agente puede investigar bajo demanda. Los agentes se ahoegan en contexto o actúan a ciegas.
+Los agentes IA que navegan hoy reciben o bien el árbol de accesibilidad completo (miles de tokens por paso) o solo píxeles. Ninguna herramienta existente (Playwright MCP, Chrome DevTools MCP, agent-browser, Obscura) vincula las acciones del agente a los requests, navegaciones y cambios de estado que causó, en un registro que el agente puede investigar bajo demanda. Los agentes se ahogan en contexto o actúan a ciegas.
 
 Rastro da al agente el mínimo que un humano percibe (qué se puede interactuar y un resumen de efecto de cada acción) mientras registra todo como una traza causal investigable a demanda.
+
+## Comparación
+
+| | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura |
+| --- | --- | --- | --- | --- | --- |
+| Qué ve el agente | solo lo interactivo, con refs | snapshot ARIA completo | DOM / CDP crudo | DOM + capturas | DOM filtrado |
+| Tokens por página | **~28-62** (HN 62, Wikipedia 268) | miles | miles | muy alto (visión) | medio |
+| Resumen de efecto por acción | **sí, una línea** | no | no | no | no |
+| Traza causal acción → efecto | **sí, consultable en vivo** | no | traza sin causalidad | no | no |
+| Investigación a demanda | **sí**, por niveles | no | sí, sin filtrar | no | parcial |
+| Seguro sin humano delante | **write guard + mascarado** | no | no | no | no |
+| Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no |
+| Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
+
+Los dos diferenciadores reales son la **atribución causal** (ninguna otra
+herramienta te dice "este click disparó estas 4 peticiones, esta cookie y esta
+navegación", consultable a mitad de tarea) y el **resumen de efecto en una
+línea**, que evita volcar la página entera tras cada acción.
+
+Dónde Rastro **no** es la respuesta: no tiene visión, así que una página que solo
+se entiende por píxeles es terreno de `browser-use`; es solo Chromium; y es
+nuevo, frente a la adopción que ya tiene Playwright MCP.
 
 ## Instalación
 
@@ -59,7 +81,7 @@ rastro request r31 --curl
 | ¿Qué pasó? | `rastro view` | Después de cada navegación |
 | ¿Qué causó eso? | `rastro effects <id>` | Cuando el resumen tiene un contador no cero |
 | ¿Qué request falló? | `rastro request <id> --curl` | Cuando viste un error de status |
-| ¿Cómo se vía la página entonces? | `rastro snapshot <id> --before` | Para comparar estados |
+| ¿Cómo se veía la página entonces? | `rastro snapshot <id> --before` | Para comparar estados |
 | ¿Todo el árbol de eventos? | `rastro trace --action <id>` | Si efectos no alcanza |
 
 ## Seguridad
@@ -161,6 +183,7 @@ pnpm lint               # Eslint
 
 ## Licencia
 
-Apache License 2.0.
+Apache License 2.0. Ver [LICENSE](LICENSE).
 
-Ver [openspec/changes/add-rastro-browser/](openspec/changes/add-rastro-browser/) para especificaciones normativas.
+Historial de versiones en [CHANGELOG.md](CHANGELOG.md).
+Especificaciones normativas en [openspec/specs/](openspec/specs/).
