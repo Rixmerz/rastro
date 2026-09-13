@@ -32,6 +32,7 @@ export interface SessionPaths {
   db: string;
   bodies: string;
   downloads: string;
+  uploads: string;
   exports: string;
   out: string;
   profile: string;
@@ -46,6 +47,7 @@ export function sessionPaths(name: string): SessionPaths {
     db: join(root, 'trace.db'),
     bodies: join(root, 'bodies'),
     downloads: join(root, 'downloads'),
+    uploads: join(root, 'uploads'),
     exports: join(root, 'exports'),
     out: join(root, 'out'),
     profile: join(rastroHome(), 'profiles', name),
@@ -54,7 +56,7 @@ export function sessionPaths(name: string): SessionPaths {
 }
 
 export function ensureSessionDirs(paths: SessionPaths): void {
-  for (const dir of [paths.root, paths.bodies, paths.downloads, paths.exports, paths.out, paths.profile]) {
+  for (const dir of [paths.root, paths.bodies, paths.downloads, paths.uploads, paths.exports, paths.out, paths.profile]) {
     ensurePrivateDir(dir);
   }
   ensurePrivateDir(runtimeDir());

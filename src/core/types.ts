@@ -147,6 +147,8 @@ export interface EffectSummary {
   downloads: string[];
   blockedWrites: string[];
   blocked?: string;
+  /** Set when the quiet window hit maxWindowMs before the page settled. */
+  windowCutMs?: number;
   hiddenBackground: number;
   hiddenUnattributed: number;
 }
@@ -250,6 +252,8 @@ export interface OpenParams {
   url?: string;
   headed?: boolean;
   allowWrite?: string[];
+  /** Absolute directories `upload` may read from, besides the session uploads dir. */
+  allowUpload?: string[];
   dialogs?: 'accept' | 'dismiss';
   pwTrace?: boolean;
   quietMs?: number;
