@@ -1,0 +1,7 @@
+{
+  "name": "rastro",
+  "version": "0.1.0",
+  "description": "Browser CLI for AI agents: minimal view, effect summaries, causal event trace, investigation on demand.",
+  "author": "rixmerz",
+  "license": "Apache-2.0"
+}
