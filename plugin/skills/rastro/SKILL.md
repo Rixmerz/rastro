@@ -48,7 +48,7 @@ Use `effects 4` to see which requests the action triggered, then `request r31 --
 
 **Never use `--reveal` or `replay` unless you asked for it.** The user must be explicit if secrets should appear in your output. `replay` requires `--yes` because it has real side effects.
 
-**Writes are guarded.** Posts to hosts outside `--allow-write` fail silently and are counted as blocked. Use `open --allow-write example.test` if you need to modify the target.
+**Writes are guarded, including the site you opened.** Every POST/PUT/PATCH/DELETE (logins and form submits too) is blocked unless its host was allowed at `open`: `rastro open https://shop.test/login --allow-write shop.test`. A blocked write shows as `1 write blocked (host)` in the summary. Only allow the hosts the task needs.
 
 ## Delegating browsing
 
