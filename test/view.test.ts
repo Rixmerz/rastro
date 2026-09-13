@@ -123,12 +123,29 @@ describe('formatView — sample page', () => {
 });
 
 describe('region collapsing', () => {
-  test('a region with 42 links collapses to a role count with a hint', () => {
+  test('a region with 42 links collapses to a preview, a count and a hint', () => {
     const view = buildView({ url: 'https://example.test/', title: 'Home', tree: nav42() });
     expect(view.regions).toHaveLength(1);
     expect(view.regions[0]).toMatchObject({ name: 'nav', collapsed: true });
+    expect(view.regions[0]?.preview).toHaveLength(5);
     const text = formatView(view);
-    expect(text).toContain('nav: 42 links (rastro view --region nav)');
+    expect(text).toMatch(/^nav: \[e\d+\] link «.+» · .* · \+37 more \(42 links; rastro view --region nav or --find <text>\)$/m);
+  });
+
+  test('collapsed preview lists form controls before links and singular counts', () => {
+    const tree: AriaNode[] = [
+      {
+        role: 'generic',
+        ref: 'e1',
+        children: [
+          ...Array.from({ length: 12 }, (_, i) => ({ role: 'link', name: `L${i}`, ref: `e${i + 2}` })),
+          { role: 'textbox', name: 'Buscar', ref: 'e99' },
+        ],
+      },
+    ];
+    const text = formatView(buildView({ url: 'https://example.test/', title: 'Home', tree }));
+    expect(text).toContain('page: [e99] textbox «Buscar» · [e2] link «L0»');
+    expect(text).toContain('(12 links · 1 textbox;');
   });
 
   test('--region nav expands all 42, one per line', () => {

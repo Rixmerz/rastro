@@ -84,7 +84,6 @@ const ActParamsSchema = z.object({
 
 const NavParamsSchema = z.object({ url: z.string().optional() });
 const RefParamsSchema = z.object({ ref: z.string() });
-const IdParamsSchema = z.object({ id: z.union([z.number(), z.string()]).transform((v) => Number(v)) });
 const RequestParamsSchema = z.object({
   id: z.string(),
   body: z.boolean().optional(),
@@ -93,7 +92,12 @@ const RequestParamsSchema = z.object({
   reveal: z.boolean().optional(),
 });
 const RevealParamsSchema = z.object({ reveal: z.boolean().optional() });
-const ExportParamsSchema = z.object({ kind: z.enum(['har', 'perfetto', 'pw-trace']) });
+const ExportParamsSchema = z.object({
+  format: z.enum(['har', 'perfetto', 'pw-trace']),
+  path: z.string().optional(),
+  bodies: z.boolean().optional(),
+});
+const ActionIdSchema = z.object({ action: z.union([z.number(), z.string()]).transform((v) => Number(v)) });
 const ReplayParamsSchema = z.object({ id: z.string(), yes: z.boolean().optional() });
 
 function parse<T>(schema: z.ZodType<T>, params: Record<string, unknown>): T {
@@ -140,12 +144,26 @@ export class EngineCore implements Engine {
   private readonly paths: SessionPaths;
   private readonly recorder: Recorder;
   private readonly attachPromises = new Map<Page, Promise<void>>();
-  private readonly sessionStartPerf = performance.now();
+  // Epoch ms of the session's t=0. Persisted in the store so a daemon restart
+  // keeps one monotonic timeline; otherwise new action windows would overlap
+  // events recorded by the previous daemon and steal their attribution.
+  private readonly sessionStartEpoch: number;
   private config: SessionConfig = { quietMs: 500, maxWindowMs: 5000, timeoutMs: 30000, pwTrace: false };
 
   private constructor(paths: SessionPaths) {
     this.paths = paths;
     this.store = TraceStore.open(paths.db);
+    const existing = this.store.getSession();
+    if (existing) {
+      this.sessionStartEpoch = Date.parse(existing.startedAt);
+    } else {
+      this.sessionStartEpoch = Date.now();
+      this.store.setSession({
+        name: paths.root.split('/').pop() ?? 'default',
+        startedAt: new Date(this.sessionStartEpoch).toISOString(),
+        mode: 'agent',
+      });
+    }
     this.bodies = new BodyStore(paths.bodies);
     this.recorder = new Recorder(this.store, this.bodies, () => this.now());
   }
@@ -157,7 +175,7 @@ export class EngineCore implements Engine {
   }
 
   private now(): number {
-    return performance.now() - this.sessionStartPerf;
+    return performance.timeOrigin + performance.now() - this.sessionStartEpoch;
   }
 
   async shutdown(): Promise<void> {
@@ -194,11 +212,6 @@ export class EngineCore implements Engine {
         timeoutMs: params.timeoutMs ?? this.config.timeoutMs,
         pwTrace: params.pwTrace ?? false,
       };
-      this.store.setSession({
-        name: this.paths.root.split('/').pop() ?? 'default',
-        startedAt: new Date().toISOString(),
-        mode: 'agent',
-      });
 
       const session = await Session.launch(
         this.paths,
@@ -621,8 +634,16 @@ export class EngineCore implements Engine {
   // --- investigation -----------------------------------------------------
 
   async history(rawParams: Record<string, unknown>): Promise<RpcResult> {
-    const params = z.object({ limit: z.number().optional() }).parse(rawParams);
-    const actions = this.store.actions(params.limit !== undefined ? { limit: params.limit } : {});
+    const params = parse(
+      z.object({ limit: z.number().optional(), from: z.number().optional(), to: z.number().optional() }),
+      rawParams,
+    );
+    const query: { limit?: number; from?: number; to?: number } = {};
+    if (params.from !== undefined) query.from = params.from;
+    if (params.to !== undefined) query.to = params.to;
+    query.limit = params.limit ?? (params.from === undefined && params.to === undefined ? 20 : undefined);
+    if (query.limit === undefined) delete query.limit;
+    const actions = this.store.actions(query);
     return { text: formatHistory(actions, this.secrets), data: actions };
   }
 
@@ -631,9 +652,9 @@ export class EngineCore implements Engine {
   }
 
   async effects(rawParams: Record<string, unknown>): Promise<RpcResult> {
-    const params = parse(IdParamsSchema.extend({ all: z.boolean().optional() }), rawParams);
-    const action = this.store.getAction(params.id);
-    if (!action) throw new RastroError(`no action #${params.id}`);
+    const params = parse(ActionIdSchema.extend({ all: z.boolean().optional() }), rawParams);
+    const action = this.store.getAction(params.action);
+    if (!action) throw new RastroError(`no action #${params.action}`, 'run rastro history');
     const { since, until } = this.windowFor(action);
     const requests = this.store.requests({ since, until });
     const events = this.store.events({ since, until });
@@ -656,7 +677,7 @@ export class EngineCore implements Engine {
       .object({
         action: z.number().optional(),
         since: z.number().optional(),
-        type: z.string().optional(),
+        type: z.array(z.string()).optional(),
         bg: z.boolean().optional(),
         limit: z.number().optional(),
       })
@@ -665,7 +686,7 @@ export class EngineCore implements Engine {
     const query: Parameters<TraceStore['events']>[0] = {};
     if (params.action !== undefined) query.actionId = params.action;
     if (params.since !== undefined) query.since = params.since;
-    if (params.type) query.types = [params.type as EventType];
+    if (params.type?.length) query.types = params.type as EventType[];
     if (params.limit !== undefined) query.limit = params.limit;
     if (!params.bg) query.buckets = ['attributed', 'unattributed'];
 
@@ -706,26 +727,31 @@ export class EngineCore implements Engine {
   }
 
   async snapshot(rawParams: Record<string, unknown>): Promise<RpcResult> {
-    const params = parse(IdParamsSchema.extend({ before: z.boolean().optional(), after: z.boolean().optional() }), rawParams);
-    const action = this.store.getAction(params.id);
-    if (!action) throw new RastroError(`no action #${params.id}`);
-    const snapshotId = params.after ? (action.snapshotAfter ?? action.snapshotBefore) : action.snapshotBefore;
-    if (snapshotId === undefined) throw new RastroError(`no snapshot for action #${params.id}`);
+    const params = parse(ActionIdSchema.extend({ phase: z.enum(['before', 'after']).optional() }), rawParams);
+    const action = this.store.getAction(params.action);
+    if (!action) throw new RastroError(`no action #${params.action}`, 'run rastro history');
+    const snapshotId =
+      params.phase === 'before' ? action.snapshotBefore : (action.snapshotAfter ?? action.snapshotBefore);
+    if (snapshotId === undefined) throw new RastroError(`no snapshot for action #${params.action}`);
     const snap = this.store.getSnapshot(snapshotId);
-    if (!snap) throw new RastroError(`no snapshot for action #${params.id}`);
+    if (!snap) throw new RastroError(`no snapshot for action #${params.action}`);
     const view = buildView(snap, {});
     return { text: formatView(view), data: snap };
   }
 
-  async screenshot(): Promise<RpcResult> {
+  async screenshot(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(z.object({ path: z.string().optional(), full: z.boolean().optional() }), rawParams);
     const page = await this.ensureAlive();
-    const filePath = join(this.paths.out, `screenshot-${Date.now()}.png`);
-    await page.screenshot({ path: filePath });
+    const filePath = params.path ?? join(this.paths.out, `screenshot-${Date.now()}.png`);
+    await page.screenshot({ path: filePath, fullPage: params.full ?? false });
     return { text: filePath, data: { file: filePath }, files: [filePath] };
   }
 
-  async console(): Promise<RpcResult> {
-    const events = this.store.events({ types: ['console', 'exception'] });
+  async console(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(z.object({ errors: z.boolean().optional(), limit: z.number().optional() }), rawParams);
+    let events = this.store.events({ types: ['console', 'exception'] });
+    if (params.errors) events = events.filter((e) => e.type === 'exception' || e.data.level === 'error');
+    if (params.limit !== undefined) events = events.slice(-params.limit);
     return { text: formatConsole(events, this.secrets), data: events };
   }
 
@@ -747,8 +773,25 @@ export class EngineCore implements Engine {
     return { text: formatStorage(entries, params.reveal ?? false, this.secrets), data: entries };
   }
 
-  async tabs(): Promise<RpcResult> {
+  async tabs(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(z.object({ select: z.string().optional(), close: z.string().optional() }), rawParams);
     const session = this.requireSession();
+    if (params.select) {
+      const tab = session.tab(params.select);
+      if (!tab) throw new RastroError(`no tab ${params.select}`, 'run rastro tabs');
+      session.activeTabId = tab.id;
+      await tab.page.bringToFront().catch(() => undefined);
+    }
+    if (params.close) {
+      const tab = session.tab(params.close);
+      if (!tab) throw new RastroError(`no tab ${params.close}`, 'run rastro tabs');
+      if (session.allTabs().length === 1) throw new RastroError('cannot close the last tab', 'use rastro close');
+      await tab.page.close();
+      if (session.activeTabId === tab.id) {
+        const next = session.allTabs().find((t) => t.id !== tab.id);
+        if (next) session.activeTabId = next.id;
+      }
+    }
     const tabs = await Promise.all(
       session.allTabs().map(async (t) => ({
         id: t.id,
@@ -826,7 +869,7 @@ export class EngineCore implements Engine {
     const sessionRec = this.store.getSession();
     const startedAt = sessionRec?.startedAt ?? new Date().toISOString();
 
-    if (params.kind === 'har') {
+    if (params.format === 'har') {
       const har = toHar({
         startedAt,
         creatorVersion: VERSION,
@@ -837,28 +880,30 @@ export class EngineCore implements Engine {
           return buf ? { text: buf.toString('utf8') } : undefined;
         },
       });
-      const filePath = join(this.paths.exports, `export-${Date.now()}.har`);
-      writeFileSync(filePath, JSON.stringify(har));
+      const filePath = params.path ?? join(this.paths.exports, `export-${Date.now()}.har`);
+      writeFileSync(filePath, this.secrets.mask(JSON.stringify(har)), { mode: 0o600 });
       return { text: filePath, data: { file: filePath }, files: [filePath] };
     }
 
-    if (params.kind === 'perfetto') {
+    if (params.format === 'perfetto') {
       const perfetto = toPerfetto({
         requests: this.store.requests(),
         actions: this.store.actions(),
         events: this.store.events(),
         sessionName: sessionRec?.name ?? 'default',
       });
-      const filePath = join(this.paths.exports, `export-${Date.now()}.json`);
-      writeFileSync(filePath, JSON.stringify(perfetto));
+      const filePath = params.path ?? join(this.paths.exports, `export-${Date.now()}.json`);
+      writeFileSync(filePath, this.secrets.mask(JSON.stringify(perfetto)), { mode: 0o600 });
       return { text: filePath, data: { file: filePath }, files: [filePath] };
     }
 
     if (!this.config.pwTrace) {
       throw new RastroError('pw-trace export requires the session to be opened with --pw-trace');
     }
-    const filePath = join(this.paths.exports, `export-${Date.now()}.zip`);
+    const filePath = params.path ?? join(this.paths.exports, `export-${Date.now()}.zip`);
     await session.context.tracing.stop({ path: filePath });
+    // tracing.stop ends the recording; restart it so later actions keep being traced.
+    await session.context.tracing.start({ screenshots: true, snapshots: true });
     return { text: filePath, data: { file: filePath }, files: [filePath] };
   }
 

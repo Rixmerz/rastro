@@ -104,7 +104,7 @@ export async function runDaemon(
           if (typeof fn !== 'function') {
             response = { id: request.id, ok: false, error: { message: `unknown method ${request.method}` } };
           } else {
-            const result = await fn(request.params);
+            const result = await fn.call(engine, request.params);
             response = toResponse(request.id, result);
           }
         } catch (err) {

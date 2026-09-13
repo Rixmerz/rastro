@@ -43,6 +43,8 @@ export interface ViewRegion {
   items: ViewItem[];
   counts: Record<string, number>;
   collapsed: boolean;
+  /** First items of a collapsed region, controls before links, so there is always something to act on. */
+  preview: ViewItem[];
 }
 
 export interface MinimalView {
@@ -141,16 +143,27 @@ export function buildView(
     const counts: Record<string, number> = {};
     for (const item of regionItems) counts[item.role] = (counts[item.role] ?? 0) + 1;
     const collapsed = !neverCollapse && regionItems.length > collapseOver;
-    regions.push({ name, items: collapsed ? [] : regionItems, counts, collapsed });
+    const preview = collapsed ? previewItems(regionItems, PREVIEW_SIZE) : [];
+    regions.push({ name, items: collapsed ? [] : regionItems, counts, collapsed, preview });
   }
 
   return { url: input.url, title: input.title, regions, total: items.length };
 }
 
+const PREVIEW_SIZE = 5;
+
+// Form controls are what an agent most often needs on a crowded page (search
+// boxes, submit buttons); links follow in document order.
+function previewItems(items: ViewItem[], size: number): ViewItem[] {
+  const controls = items.filter((item) => item.role !== 'link');
+  const links = items.filter((item) => item.role === 'link');
+  return [...controls, ...links].slice(0, size);
+}
+
 function formatCounts(counts: Record<string, number>): string {
   return Object.entries(counts)
     .sort(([roleA, a], [roleB, b]) => b - a || roleA.localeCompare(roleB))
-    .map(([role, count]) => `${count} ${pluralizeRole(role)}`)
+    .map(([role, count]) => `${count} ${count === 1 ? role : pluralizeRole(role)}`)
     .join(' · ');
 }
 
@@ -175,7 +188,12 @@ export function formatView(view: MinimalView, opts: { urls?: boolean; expanded?:
 
   for (const region of view.regions) {
     if (region.collapsed) {
-      lines.push(`${region.name}: ${formatCounts(region.counts)} (rastro view --region ${region.name})`);
+      const total = Object.values(region.counts).reduce((a, b) => a + b, 0);
+      const shown = region.preview.map((item) => formatItem(item, opts)).join(' · ');
+      const more = total - region.preview.length;
+      lines.push(
+        `${region.name}: ${shown} · +${more} more (${formatCounts(region.counts)}; rastro view --region ${region.name} or --find <text>)`,
+      );
       continue;
     }
     if (opts.expanded) {

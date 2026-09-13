@@ -309,7 +309,7 @@ describe('bignav', () => {
         await engine.open({ url: `${server.origin}/bignav` });
         const viewRes = await engine.view({});
         console.log(`/bignav view: ${estimateTokens(viewRes.text)} tokens`);
-        expect(viewRes.text).toContain('nav: 42 links');
+        expect(viewRes.text).toContain('42 links; rastro view --region nav');
 
         const regionRes = await engine.view({ region: 'nav' });
         const view = regionRes.data as MinimalView;
