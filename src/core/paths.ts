@@ -1,3 +1,4 @@
+import { RastroError } from './types.ts';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -60,4 +61,19 @@ export function ensureSessionDirs(paths: SessionPaths): void {
     ensurePrivateDir(dir);
   }
   ensurePrivateDir(runtimeDir());
+}
+
+// A `sockaddr_un.sun_path` is 108 bytes including the trailing NUL, so a socket
+// path over 107 bytes fails to bind/connect with a bare EINVAL that gives no
+// clue where the path came from. Check early and point at the fix.
+const MAX_SOCKET_PATH_BYTES = 107;
+
+export function assertSocketPathFits(socketPath: string): void {
+  const bytes = Buffer.byteLength(socketPath, 'utf8');
+  if (bytes > MAX_SOCKET_PATH_BYTES) {
+    throw new RastroError(
+      `session socket path is too long (${bytes} bytes, limit ${MAX_SOCKET_PATH_BYTES}): ${socketPath}`,
+      'set a shorter $XDG_RUNTIME_DIR or $RASTRO_HOME so the session socket path fits the platform Unix-socket limit',
+    );
+  }
 }

@@ -7,7 +7,7 @@ import type { Server, Socket } from 'node:net';
 import { appendFileSync, chmodSync, rmSync } from 'node:fs';
 import type { Engine, RpcRequest, RpcResponse, RpcResult } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
-import { ensurePrivateDir, runtimeDir, sessionPaths } from '../core/paths.ts';
+import { assertSocketPathFits, ensurePrivateDir, runtimeDir, sessionPaths } from '../core/paths.ts';
 
 export interface RunDaemonOptions {
   idleMs?: number;
@@ -18,6 +18,7 @@ export interface RunDaemonOptions {
 function defaultIdleMs(): number {
   return Number(process.env.RASTRO_IDLE_MS) || 3_600_000;
 }
+
 
 function logLine(logPath: string, line: string): void {
   try {
@@ -49,6 +50,7 @@ export async function runDaemon(
   opts: RunDaemonOptions = {},
 ): Promise<void> {
   const paths = sessionPaths(session);
+  assertSocketPathFits(paths.socket);
   const idleMs = opts.idleMs ?? defaultIdleMs();
   const logPath = `${paths.root}/daemon.log`;
 
@@ -95,7 +97,9 @@ export async function runDaemon(
             const result = await engine.close(request.params);
             response = toResponse(request.id, result);
             socket.write(`${JSON.stringify(response)}\n`);
-            await shutdown();
+            // engine.close() already shut the engine itself down (R17) — the
+            // daemon only has its own socket/timers left to tear down.
+            await shutdown({ engineAlreadyShutDown: true });
             return;
           }
           const fn = engine[request.method as keyof Engine] as
@@ -118,11 +122,28 @@ export async function runDaemon(
     function resetIdle(): void {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        void shutdown();
+        void onIdle();
       }, idleMs);
     }
 
-    async function shutdown(): Promise<void> {
+    // R14: a human `record start` can sit quiet for the whole idle window —
+    // check the engine for an open session before exiting, and reschedule
+    // instead of tearing the daemon down under it.
+    async function onIdle(): Promise<void> {
+      try {
+        const result = await engine.status({});
+        const data = result.data as { open?: boolean } | null | undefined;
+        if (data?.open) {
+          resetIdle();
+          return;
+        }
+      } catch (err) {
+        logLine(logPath, `idle status check failed: ${String(err)}`);
+      }
+      await shutdown();
+    }
+
+    async function shutdown(opts: { engineAlreadyShutDown?: boolean } = {}): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
       clearTimeout(idleTimer);
@@ -130,10 +151,14 @@ export async function runDaemon(
       process.off('SIGINT', onSignal);
       server.close();
       rmSync(paths.socket, { force: true });
-      try {
-        await engine.shutdown();
-      } catch (err) {
-        logLine(logPath, `shutdown error: ${String(err)}`);
+      // R17: engine.close() (the RPC method) already shut the engine down;
+      // calling engine.shutdown() again here hit an already-closed database.
+      if (!opts.engineAlreadyShutDown) {
+        try {
+          await engine.shutdown();
+        } catch (err) {
+          logLine(logPath, `shutdown error: ${String(err)}`);
+        }
       }
       resolveListen();
     }

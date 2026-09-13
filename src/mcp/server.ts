@@ -26,6 +26,14 @@ function resolveSession(input: { session?: string }, defaultSession: string): st
   return input.session ?? defaultSession;
 }
 
+// S10 (CWE-697): an empty string in an allowlist array matches unintended
+// hosts/paths downstream (the engine's own guard rejects it, but the MCP
+// tool should never forward one in the first place).
+function dropEmpty(values: string[] | undefined): string[] | undefined {
+  if (values === undefined) return undefined;
+  return values.filter((v) => v.length > 0);
+}
+
 function mimeTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
     case '.har':
@@ -109,8 +117,21 @@ export function createMcpServer(callFn: CallFn = call, defaultSession = process.
   register(
     'rastro_open',
     'Opens the browser session, optionally navigating to a URL.',
-    { url: z.string().optional(), allowWrite: z.array(z.string()).optional(), headed: z.boolean().optional() },
-    (a) => ({ method: 'open', params: { url: a.url, allowWrite: a.allowWrite, headed: a.headed } }),
+    {
+      url: z.string().optional(),
+      allowWrite: z.array(z.string()).optional(),
+      allowUpload: z.array(z.string()).optional(),
+      headed: z.boolean().optional(),
+    },
+    (a) => ({
+      method: 'open',
+      params: {
+        url: a.url,
+        allowWrite: dropEmpty(a.allowWrite as string[] | undefined),
+        allowUpload: dropEmpty(a.allowUpload as string[] | undefined),
+        headed: a.headed,
+      },
+    }),
   );
 
   register(

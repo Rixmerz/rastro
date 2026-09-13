@@ -30,80 +30,74 @@ name: Login with email and password
 
 params:
   email:
-    description: Email address
+    default: ""
   password:
-    description: User password
     secret: true
 
 steps:
-  - kind: open
-    url: https://example.test/login
+  - open: https://example.test/login
 
-  - kind: click
-    target:
+  - click:
       role: button
       name: "Accept cookies"
     expect:
-      requests: ["GET /"]
+      requests: ["GET / 2xx"]
 
-  - kind: fill
-    target:
+  - fill:
       role: textbox
       name: "Email"
     value: "{{email}}"
 
-  - kind: fill
-    target:
+  - fill:
       role: textbox
       name: "Password"
     value: "{{password}}"
 
-  - kind: click
-    target:
+  - click:
       role: button
       name: "Entrar"
     expect:
       url: /dashboard
       requests: ["POST /api/login 2xx"]
 
-  - kind: wait
-    text: "Welcome"
+  - wait:
+      text: "Welcome"
 
-  - kind: assert
-    url: /dashboard
-    text: "Welcome"
+  - assert:
+      url: /dashboard
+      text: "Welcome"
 
-  - kind: if
-    condition:
+  - if:
       text: "Accept tracking"
     then:
-      - kind: click
-        target:
+      - click:
           role: button
           name: "Accept"
 ```
 
+The step kind is the step's own key (`open:`, `click:`, `fill:`, ...), not a separate `kind:` field — the value under that key is the target/URL/condition the kind expects. `target`, `value`, `expect`, `then`, `else`, `id`, `note` are sibling fields at the same level.
+
 ### Step kinds
 
-| Kind | Parameters | Effect |
+| Kind | Shape | Effect |
 | --- | --- | --- |
-| `open` | `url` | Navigate to URL |
-| `goto` | `url` | Navigate to URL (same as open within a session) |
-| `click` | `target` | Click an element |
-| `dblclick` | `target` | Double-click |
-| `fill` | `target`, `value` | Type text into an input (replaces content) |
-| `type` | `target`, `value` | Type text (appends to content) |
-| `select` | `target`, `value` | Select an option in a dropdown |
-| `check` | `target` | Check a checkbox |
-| `uncheck` | `target` | Uncheck a checkbox |
-| `hover` | `target` | Hover over an element |
-| `press` | `target/key`, `key` | Press a key (Enter, Escape, etc.) |
-| `back` | none | Navigate back |
-| `forward` | none | Navigate forward |
-| `reload` | none | Reload page |
-| `wait` | `text` / `url` / `ms` | Wait for text, URL change, or milliseconds |
-| `assert` | `text` / `url` / `request` | Assert text, URL, or request matched |
-| `if` | `condition`, `then`, `else` | Conditional execution |
+| `open: url` | value is the URL string | Navigate to URL |
+| `goto: url` | value is the URL string | Navigate to URL (same as open within a session) |
+| `click: target` | value is a target | Click an element |
+| `dblclick: target` | value is a target | Double-click |
+| `fill: target`, `value:` | target + sibling `value` | Type text into an input (replaces content) |
+| `type: target`, `value:` | target + sibling `value` | Type text (appends to content) |
+| `select: target`, `value:` | target + sibling `value` | Select an option in a dropdown |
+| `check: target` | value is a target | Check a checkbox |
+| `uncheck: target` | value is a target | Uncheck a checkbox |
+| `hover: target` | value is a target | Hover over an element |
+| `press: key`, `target:` | value is the key string, optional sibling `target` | Press a key (Enter, Escape, etc.) |
+| `back: true` | literal `true` | Navigate back |
+| `forward: true` | literal `true` | Navigate forward |
+| `reload: true` | literal `true` | Reload page |
+| `wait: {...}` | `text` / `url` / `ms` | Wait for text, URL change, or milliseconds |
+| `assert: {...}` | `text` / `url` / `request` | Assert text, URL, or request matched |
+| `if: {...}`, `then:`, `else:` | condition + sibling step lists | Conditional execution |
 
 ### Target locator
 
@@ -129,51 +123,49 @@ The `expect` block derived from a recorded action:
 ```yaml
 expect:
   url: /panel               # assert top-level document URL
-  text: "Welcome"           # assert text visible
   requests:
     - "GET /api/user 2xx"   # assert request method, path, status class
-    - "POST /api/save"      # (any status)
+    - "POST /api/save 2xx"  # method, path and a 3-digit status or an Nxx class — all three are required
 ```
 
-Expectations are optional. Rastro verifies them after the quiet window and stops at the first failure.
+`expect` (and the `if`/`assert` condition below) accepts only the fields shown — an unrecognized field is rejected. Expectations are optional. Rastro verifies them after the quiet window and stops at the first failure.
 
 ### Conditional steps
 
 ```yaml
-- kind: if
-  condition:
+- if:
     text: "Accept cookies"  # run then/else based on visibility
   then:
-    - kind: click
-      target:
+    - click:
         role: button
         name: "Accept"
   else:
-    - kind: click
-      target:
+    - click:
         role: button
         name: "Continue"
 ```
 
-Condition can be `text`, `url`, or `request: "method path"`.
+Condition can be `text`, `url`, or `request: "METHOD path STATUSCLASS"` (same three-token pattern as `expect.requests`).
 
 ### Parameters and substitution
 
 ```yaml
+name: Fill form with a param
+
 params:
   email:
-    description: Email
+    default: ""
   password:
-    description: Password
     secret: true            # masked in trace and output
 
 steps:
-  - kind: fill
-    target:
+  - fill:
       role: textbox
       name: Email
     value: "{{email}}"      # substituted at runtime
 ```
+
+A param entry accepts only `secret` and `default` — no `description` field.
 
 Run with `rastro flow run login.yaml --param email=user@test.com --param password=secret`.
 
@@ -273,7 +265,7 @@ Run the test with `npx playwright test login.spec.ts`.
 Chrome DevTools Recorder exports to JSON. Convert it to a Rastro flow:
 
 ```bash
-rastro flow import recording.json --out flow.yaml
+rastro flow import recording.json flow.yaml
 ```
 
 Supports Chrome Recorder steps:

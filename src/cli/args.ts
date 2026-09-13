@@ -78,7 +78,7 @@ export interface Dispatch {
 }
 
 export const USAGE: Record<string, string> = {
-  open: 'rastro open [url] [--headed] [--allow-write h1,h2] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n]',
+  open: 'rastro open [url] [--headed] [--allow-write h1,h2] [--allow-upload dir,dir] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n]',
   goto: 'rastro goto <url>',
   back: 'rastro back',
   forward: 'rastro forward',
@@ -88,13 +88,13 @@ export const USAGE: Record<string, string> = {
   click: 'rastro click <ref>',
   fill: 'rastro fill <ref> <value> [--secret]',
   type: 'rastro type <ref> [value] [--secret]',
-  press: 'rastro press <ref|-> <key>',
+  press: 'rastro press <ref> <key>',
   select: 'rastro select <ref> <value>',
   check: 'rastro check <ref>',
   uncheck: 'rastro uncheck <ref>',
   hover: 'rastro hover <ref>',
   dblclick: 'rastro dblclick <ref>',
-  scroll: 'rastro scroll <ref|-> [up|down]',
+  scroll: 'rastro scroll <ref> [up|down]',
   upload: 'rastro upload <ref> <file>',
   detail: 'rastro detail <ref>',
   history: 'rastro history [--limit n] [--from id] [--to id]',
@@ -109,7 +109,7 @@ export const USAGE: Record<string, string> = {
   tabs: 'rastro tabs [--select t2] [--close t2]',
   eval: 'rastro eval <expr> [--ref e5]',
   replay: 'rastro replay <requestId> [--yes]',
-  export: 'rastro export <har|perfetto|pw-trace> [path] [--bodies]',
+  export: 'rastro export <har|perfetto|pw-trace> [path] [--bodies] [--reveal]',
   'record start': 'rastro record start [url] [--continue flow.yaml --at n]',
   'record stop': 'rastro record stop [--save flow.yaml]',
   'flow save': 'rastro flow save <file> [--from id] [--to id] [--name n]',

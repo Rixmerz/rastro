@@ -61,6 +61,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
       const { values, positionals } = sub(argv, {
         headed: { type: 'boolean' },
         'allow-write': { type: 'string' },
+        'allow-upload': { type: 'string' },
         dialogs: { type: 'string' },
         'pw-trace': { type: 'boolean' },
         'quiet-ms': { type: 'string' },
@@ -73,6 +74,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
           url: positionals[0],
           headed: bool(values.headed),
           allowWrite: splitList(str(values['allow-write'])),
+          allowUpload: splitList(str(values['allow-upload']))?.map((p) => resolvePath(p)),
           dialogs: str(values.dialogs),
           pwTrace: bool(values['pw-trace']),
           quietMs: toNumber(str(values['quiet-ms']), '--quiet-ms'),
@@ -239,7 +241,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
       return { method: 'replay', params: { id, yes: bool(values.yes) } };
     }
     case 'export': {
-      const { values, positionals } = sub(argv, { bodies: { type: 'boolean' } });
+      const { values, positionals } = sub(argv, { bodies: { type: 'boolean' }, reveal: { type: 'boolean' } });
       const format = requirePositional(positionals, 0, 'format', USAGE.export ?? '');
       return {
         method: 'export',
@@ -247,6 +249,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
           format,
           path: positionals[1] === undefined ? undefined : resolvePath(positionals[1]),
           bodies: bool(values.bodies),
+          reveal: bool(values.reveal),
         },
       };
     }

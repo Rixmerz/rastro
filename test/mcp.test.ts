@@ -66,6 +66,20 @@ describe('tool listing', () => {
   });
 });
 
+test('rastro_open drops empty-string entries from allowWrite and allowUpload (S10)', async () => {
+  const calls: Call[] = [];
+  const { client } = await connect((session, method, params) => {
+    calls.push({ session, method, params });
+    return Promise.resolve({ text: 'opened', data: null });
+  });
+  await client.callTool({
+    name: 'rastro_open',
+    arguments: { url: 'https://example.test', allowWrite: ['', 'x'], allowUpload: ['', 'x'] },
+  });
+  expect(calls[0]!.params.allowWrite).toEqual(['x']);
+  expect(calls[0]!.params.allowUpload).toEqual(['x']);
+});
+
 test('rastro_act maps params exactly', async () => {
   const calls: Call[] = [];
   const { client } = await connect((session, method, params) => {

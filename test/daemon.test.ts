@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { call, listSessions } from '../src/daemon/client.ts';
+import { runDaemon } from '../src/daemon/server.ts';
 import { RastroError } from '../src/core/types.ts';
+import type { Engine } from '../src/core/types.ts';
 
 const FAKE_ENGINE = new URL('./helpers/fake-engine.ts', import.meta.url).pathname;
 
@@ -140,5 +142,97 @@ describe('daemon lifecycle', () => {
     await waitUntilGone(socketPath(session));
     const after = await listSessions();
     expect(after.find((s) => s.session === session)).toBeUndefined();
+  });
+
+  // R14: the idle timer used to fire and shut the daemon down mid-recording,
+  // regardless of whether a session was open. Drive runDaemon directly with
+  // a fake engine that reports "open" for the first two idle checks and
+  // "closed" for the rest.
+  test('idle timer reschedules while the engine reports an open session (R14)', async () => {
+    const session = track('idle-open-session');
+    const opens = [true, true, false];
+    let statusCalls = 0;
+    const engine = {
+      status: async () => {
+        const open = opens[Math.min(statusCalls, opens.length - 1)];
+        statusCalls++;
+        return { text: '', data: { open } };
+      },
+      shutdown: async () => undefined,
+    } as unknown as Engine & { shutdown(): Promise<void> };
+
+    let ready = false;
+    const done = runDaemon(session, engine, { idleMs: 60, onListening: () => (ready = true) });
+    const readyDeadline = Date.now() + 2000;
+    while (!ready) {
+      if (Date.now() > readyDeadline) throw new Error('daemon never became ready');
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    const sock = socketPath(session);
+    expect(existsSync(sock)).toBe(true);
+
+    // One idle window passes while status reports "open" — the daemon must
+    // still be listening at this point, having rescheduled instead of
+    // exiting (the third check, well after this point, reports "closed").
+    await new Promise((r) => setTimeout(r, 80));
+    expect(existsSync(sock)).toBe(true);
+    expect(statusCalls).toBeGreaterThanOrEqual(1);
+
+    // The third idle check reports "closed" — now it shuts down for real.
+    await done;
+    expect(existsSync(sock)).toBe(false);
+  });
+
+  // R17: engine.close() (the RPC method) already shuts the engine down; the
+  // daemon used to call engine.shutdown() a second time afterward, which hit
+  // an already-closed database. Assert the daemon calls it at most once.
+  test('close shuts the engine down exactly once (R17)', async () => {
+    const session = track('close-once-session');
+    let shutdownCalls = 0;
+    const engine = {
+      close: async () => {
+        // Mirrors the real engine: close() itself performs the shutdown.
+        await engine.shutdown();
+        return { text: 'closed', data: null };
+      },
+      status: async () => ({ text: '', data: { open: false } }),
+      shutdown: async () => {
+        shutdownCalls++;
+        if (shutdownCalls > 1) throw new Error('database is not open');
+      },
+    } as unknown as Engine & { shutdown(): Promise<void> };
+
+    let ready = false;
+    const done = runDaemon(session, engine, { idleMs: 60_000, onListening: () => (ready = true) });
+    const readyDeadline = Date.now() + 2000;
+    while (!ready) {
+      if (Date.now() > readyDeadline) throw new Error('daemon never became ready');
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    const result = await call(session, 'close', {}, { spawn: false });
+    expect(result.text).toBe('closed');
+    await done;
+    expect(shutdownCalls).toBe(1);
+  });
+
+  // R20: a socket path over the platform's sockaddr_un limit fails with a
+  // bare EINVAL; the client must catch it and name the fix.
+  test('a too-long socket path is rejected with a hint instead of a bare EINVAL (R20)', async () => {
+    const longRuntimeDir = mkdtempSync(join(tmpdir(), 'r'.repeat(80)));
+    const previous = process.env.XDG_RUNTIME_DIR;
+    process.env.XDG_RUNTIME_DIR = longRuntimeDir;
+    try {
+      await expect(call('too-long-path-session', 'view', {}, { spawn: false })).rejects.toMatchObject({
+        message: expect.stringContaining('socket path is too long'),
+        hint: expect.stringContaining('XDG_RUNTIME_DIR'),
+      });
+      await expect(call('too-long-path-session', 'view', {}, { spawn: false })).rejects.toBeInstanceOf(RastroError);
+    } finally {
+      if (previous === undefined) delete process.env.XDG_RUNTIME_DIR;
+      else process.env.XDG_RUNTIME_DIR = previous;
+      rmSync(longRuntimeDir, { recursive: true, force: true });
+    }
   });
 });

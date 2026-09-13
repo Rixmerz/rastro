@@ -37,15 +37,15 @@ If `--reveal` is not given, passwords, tokens, cookie values, and headers named 
 ## Trace: the full event log
 
 ```bash
-rastro trace                    # all events, newest first
+rastro trace                    # all events, oldest first, no limit
 rastro trace --action 4         # events attributed to action 4
 rastro trace --type request     # only HTTP requests
-rastro trace --since 5000       # events in the last 5 seconds
-rastro trace --bg               # only background events
-rastro trace --limit 20         # first 20 events (default 100)
+rastro trace --since 5000       # events at or after session-relative ms 5000 (absolute, not "last N seconds")
+rastro trace --bg               # includes background events (hidden by default)
+rastro trace --limit 20         # first 20 events after the other filters
 ```
 
-Events are classified as `attributed` (caused by the action), `background` (polling, tracking), or `unattributed` (worker thread or missing initiator).
+Events are in ascending timestamp order. `--since` compares against the same absolute session-relative timestamps shown in `history` and `trace` output, not a duration. Events are classified as `attributed` (caused by the action), `background` (polling, tracking, hidden unless `--bg`), or `unattributed`/null-bucket (worker thread or missing initiator — shown by default).
 
 ## Snapshot: the page at a specific moment
 
@@ -60,7 +60,7 @@ Returns the same minimal view as `rastro view`: interactive elements, grouped by
 
 ```bash
 rastro console                  # all console messages, by action
-rastro console --errors         # only errors and warnings
+rastro console --errors         # errors only (exceptions and level=error), no warnings
 ```
 
 Text is truncated to 200 characters and marked as untrusted with «» delimiters. Use `trace --type console` to see the full log with timestamps.

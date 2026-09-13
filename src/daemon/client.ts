@@ -8,7 +8,7 @@ import { existsSync, openSync, readdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { RastroError } from '../core/types.ts';
 import type { RpcMethod, RpcResponse, RpcResult } from '../core/types.ts';
-import { ensurePrivateDir, runtimeDir, sessionPaths } from '../core/paths.ts';
+import { assertSocketPathFits, ensurePrivateDir, runtimeDir, sessionPaths } from '../core/paths.ts';
 
 export interface CallOptions {
   /** Set to false to fail instead of spawning a daemon (used by `close`, `status`). */
@@ -17,6 +17,7 @@ export interface CallOptions {
 }
 
 let nextId = 1;
+
 
 function defaultCallTimeoutMs(): number {
   return Number(process.env.RASTRO_CALL_TIMEOUT_MS) || 120_000;
@@ -119,6 +120,7 @@ export async function call(
   opts: CallOptions = {},
 ): Promise<RpcResult> {
   const paths = sessionPaths(session);
+  assertSocketPathFits(paths.socket);
   const timeoutMs = opts.timeoutMs ?? defaultCallTimeoutMs();
   const allowSpawn = opts.spawn !== false;
 

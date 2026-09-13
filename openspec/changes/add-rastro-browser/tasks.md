@@ -41,6 +41,6 @@
 ## 6. Validation
 
 - [x] 6.1 typecheck, lint, full test suite green
-- [ ] 6.2 Adversarial review and security audit; fixes applied
-- [ ] 6.3 Real-site token measurement and GPU check (`fuser /dev/nvidia*`)
-- [ ] 6.4 Install `rastro` binary on PATH and the plugin locally
+- [x] 6.2 Adversarial review and security audit; fixes applied
+- [x] 6.3 Real-site token measurement and GPU check (`fuser /dev/nvidia*`)
+- [x] 6.4 Install `rastro` binary on PATH and the plugin locally

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { call } from '../src/daemon/client.ts';
+import { parseFlow } from '../src/flow/format.ts';
 
 const BIN = new URL('../bin/rastro.js', import.meta.url).pathname;
 const FAKE_ENGINE = new URL('./helpers/fake-engine.ts', import.meta.url).pathname;
@@ -78,6 +79,31 @@ describe('rastro CLI', () => {
     const data = JSON.parse(stdout) as { method: string; params: Record<string, unknown> };
     expect(data.method).toBe('act');
     expect(data.params).toMatchObject({ ref: 'e3', kind: 'fill', value: 'hola', secret: true });
+  });
+
+  test('open maps --allow-upload to absolute allowUpload paths', async () => {
+    const session = track('cli-open-allow-upload');
+    const { stdout, code } = await runCli([
+      '-s',
+      session,
+      'open',
+      'https://example.test',
+      '--allow-upload',
+      'uploads,more-uploads',
+      '--json',
+    ]);
+    expect(code).toBe(0);
+    const data = JSON.parse(stdout) as { params: { allowUpload: string[] } };
+    expect(data.params.allowUpload).toEqual([resolve(process.cwd(), 'uploads'), resolve(process.cwd(), 'more-uploads')]);
+  });
+
+  test('export maps --reveal and --bodies', async () => {
+    const session = track('cli-export-reveal');
+    const { stdout, code } = await runCli(['-s', session, 'export', 'har', '--reveal', '--bodies', '--json']);
+    expect(code).toBe(0);
+    const data = JSON.parse(stdout) as { method: string; params: Record<string, unknown> };
+    expect(data.method).toBe('export');
+    expect(data.params).toMatchObject({ format: 'har', reveal: true, bodies: true });
   });
 
   test('trace splits --type into a list', async () => {
@@ -162,5 +188,20 @@ describe('rastro CLI', () => {
     const { stdout, code } = await runCli(['-s', 'never-started', 'close']);
     expect(code).toBe(0);
     expect(stdout).toContain('is not running');
+  });
+});
+
+describe('flows.md examples parse with the real flow parser', () => {
+  const flowsMdPath = new URL('../plugin/skills/rastro/references/flows.md', import.meta.url).pathname;
+  const flowsMd = readFileSync(flowsMdPath, 'utf8');
+  const yamlBlocks = [...flowsMd.matchAll(/```yaml\n([\s\S]*?)```/g)].map((m) => m[1] ?? '');
+  const stepsBlocks = yamlBlocks.filter((block) => block.includes('steps:'));
+
+  test('flows.md has at least one fenced yaml block with steps:', () => {
+    expect(stepsBlocks.length).toBeGreaterThan(0);
+  });
+
+  test.each(stepsBlocks.map((block, i) => [i, block] as const))('block #%i parses', (_i, block) => {
+    expect(() => parseFlow(block)).not.toThrow();
   });
 });

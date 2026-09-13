@@ -41,7 +41,7 @@ rastro upload e12 /path/to/file.pdf    # select a file input and upload
 Actions timeout after 30 seconds by default (waiting for an element, waiting for the page to settle). The action fails with a timeout error and is recorded in the trace.
 
 ```bash
-rastro open https://example.test --idle-ms 2000     # wait 2 s instead of default 500 ms quiet window
+rastro open https://example.test --quiet-ms 2000     # wait 2 s instead of default 500 ms quiet window
 ```
 
 Common timeout causes:
@@ -53,7 +53,7 @@ Common timeout causes:
 
 ## Crash recovery
 
-If the browser crashes, the next command relaunches it with the same session profile and trace. The crash is recorded as an event in the trace. No trace data is lost.
+If the browser crashes, the session relaunches on the next command, with the same session profile and trace. The crash is recorded as an event in the trace. No trace data is lost.
 
 If recovery fails (port collision, permission error), check:
 
