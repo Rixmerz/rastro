@@ -1,0 +1,6 @@
+{
+  "env": {
+    "VISE_TEST_CMD": "npm test --silent",
+    "VISE_LINT_CMD": "npx --no-install eslint ."
+  }
+}
