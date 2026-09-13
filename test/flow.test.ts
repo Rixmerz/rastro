@@ -109,6 +109,50 @@ steps:
   expect(() => parseFlow(yaml)).toThrow('steps[2].click: target needs at least one locator field');
 });
 
+test('parseFlow/stringifyFlow round-trip a forward step', () => {
+  const flow: Flow = { name: 'x', steps: [{ forward: true, id: 's1' }] };
+  const yaml = stringifyFlow(flow);
+  expect(parseFlow(yaml)).toEqual(flow);
+});
+
+test('parseFlow accepts the canonical login example (click/expect shape)', () => {
+  const yaml = `
+name: Login with email and password
+params:
+  password:
+    secret: true
+steps:
+  - open: https://app.test/login
+  - fill:
+      role: textbox
+      name: Email
+    value: a@b.com
+  - fill:
+      role: textbox
+      name: Password
+    value: "{{password}}"
+  - click:
+      role: button
+      name: Entrar
+    expect:
+      url: /panel
+      requests:
+        - "POST /api/login 2xx"
+  - if:
+      text: "Aceptar cookies"
+    then:
+      - click:
+          role: button
+          name: Aceptar
+`;
+  const flow = parseFlow(yaml);
+  expect(flow.steps).toHaveLength(5);
+  expect(flow.steps[3]).toMatchObject({
+    click: { role: 'button', name: 'Entrar' },
+    expect: { url: '/panel', requests: ['POST /api/login 2xx'] },
+  });
+});
+
 test('parseFlow rejects a step with no recognizable kind', () => {
   const yaml = `
 name: x
@@ -150,6 +194,35 @@ steps:
     expect(step.then).toHaveLength(1);
     expect(step.else).toHaveLength(1);
   }
+});
+
+// ---------------------------------------------------------------------------
+// S8 (CWE-94): param names and request patterns must never inject code into
+// generated output.
+// ---------------------------------------------------------------------------
+
+test('parseFlow rejects a param name that is not a valid identifier', () => {
+  const yaml = `
+name: x
+params:
+  "x = 1; process.exit(); //":
+    secret: true
+steps:
+  - open: https://a
+`;
+  expect(() => parseFlow(yaml)).toThrow(/params/);
+});
+
+test('parseFlow accepts a valid identifier param name', () => {
+  const yaml = `
+name: x
+params:
+  password:
+    secret: true
+steps:
+  - open: https://a
+`;
+  expect(parseFlow(yaml).params).toEqual({ password: { secret: true } });
 });
 
 // ---------------------------------------------------------------------------
@@ -380,6 +453,37 @@ test('flowToPlaywright exports if/else as a conditional block', () => {
   expect(spec).toContain(`page.getByRole("button", { name: "Aceptar", exact: true })`);
   expect(spec).toContain('} else {');
   expect(spec).toContain(`page.getByRole("button", { name: "Rechazar", exact: true })`);
+});
+
+test('flowToPlaywright keeps an assert request pattern to one line, even with an embedded newline', () => {
+  const flow: Flow = {
+    name: 'x',
+    steps: [
+      { open: 'https://a', id: 's1' },
+      { assert: { request: 'GET /x 200\nprocess.exit(1); //' }, id: 's2' },
+    ],
+  };
+  const spec = flowToPlaywright(flow);
+  const codeLines = spec.split('\n').filter((l) => l.includes('process.exit'));
+  expect(codeLines.length).toBeGreaterThan(0);
+  for (const line of codeLines) expect(line.trim().startsWith('//')).toBe(true);
+});
+
+test('flowToPlaywright keeps an if-condition request pattern to one line, even with an embedded newline', () => {
+  const flow: Flow = {
+    name: 'x',
+    steps: [
+      {
+        if: { request: 'GET /x 200\nprocess.exit(1); //' },
+        then: [{ click: { role: 'button', name: 'Aceptar' }, id: 's2' }],
+        id: 's1',
+      },
+    ],
+  };
+  const spec = flowToPlaywright(flow);
+  const codeLines = spec.split('\n').filter((l) => l.includes('process.exit'));
+  expect(codeLines.length).toBeGreaterThan(0);
+  for (const line of codeLines) expect(line.trim().startsWith('//')).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, readFileSync as readFile, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, readFileSync as readFile, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -397,10 +397,16 @@ describe('exports', () => {
         await engine.act({ ref: await refByName(engine, 'Entrar'), kind: 'click' });
 
         const har = await engine.export({ format: 'har' });
-        const harJson = JSON.parse(readFileSync((har.data as { file: string }).file, 'utf8')) as {
-          log: { entries: unknown[] };
+        const harFile = (har.data as { file: string }).file;
+        const harText = readFileSync(harFile, 'utf8');
+        const harJson = JSON.parse(harText) as {
+          log: { entries: { request: { headers: { name: string; value: string }[] }; response: { content: Record<string, unknown> } }[] };
         };
         expect(harJson.log.entries.length).toBeGreaterThan(0);
+        // S5: no secret, and (without --bodies) no response content embedded.
+        expect(harText).not.toContain('right');
+        expect(harJson.log.entries.every((e) => !('text' in e.response.content))).toBe(true);
+        expect(statSync(harFile).mode & 0o777).toBe(0o600);
 
         const perfetto = await engine.export({ format: 'perfetto' });
         const perfettoJson = JSON.parse(readFileSync((perfetto.data as { file: string }).file, 'utf8')) as {
@@ -409,11 +415,195 @@ describe('exports', () => {
         expect(perfettoJson.traceEvents.some((e) => e.ph === 'B')).toBe(true);
         expect(perfettoJson.traceEvents.some((e) => e.ph === 'E')).toBe(true);
 
-        const pwTrace = await engine.export({ format: 'pw-trace' });
-        expect(existsSync((pwTrace.data as { file: string }).file)).toBe(true);
+        // S4: a secret was typed this session, so an unredacted pw-trace is
+        // refused unless the caller opts in with --reveal.
+        await expect(engine.export({ format: 'pw-trace' })).rejects.toThrow(/refused/);
+        const pwTrace = await engine.export({ format: 'pw-trace', reveal: true });
+        const pwTraceFile = (pwTrace.data as { file: string }).file;
+        expect(existsSync(pwTraceFile)).toBe(true);
+        expect(pwTrace.text).toContain('NOT redacted');
+        expect(statSync(pwTraceFile).mode & 0o777).toBe(0o600);
 
         const traceRes = await engine.trace({});
         expect(traceRes.text).toContain('closed');
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('secret masking in RPC data', () => {
+  test(
+    'S1: request/cookies/history .data never carries a registered secret, and --reveal restores it',
+    async () => {
+      const engine = await createEngine(nextSession('mask-data'));
+      try {
+        await engine.open({ url: `${server.origin}/login`, allowWrite: ['127.0.0.1'] });
+        await engine.act({ ref: await refByName(engine, 'Email'), kind: 'fill', value: 'a@b.com' });
+        await engine.act({ ref: await refByName(engine, 'Contraseña'), kind: 'fill', value: 'right', secret: true });
+        const clickRes = await engine.act({ ref: await refByName(engine, 'Entrar'), kind: 'click' });
+
+        const historyData = (await engine.history({})).data as ActionRecord[];
+        expect(JSON.stringify(historyData)).not.toContain('right');
+
+        const effects = await engine.effects({ action: actionId(clickRes) });
+        const loginReq = (effects.data as { requests: RequestRecord[] }).requests.find(
+          (r) => r.method === 'POST' && new URL(r.url).pathname === '/login',
+        )!;
+
+        const maskedReq = await engine.request({ id: loginReq.id });
+        expect(JSON.stringify(maskedReq.data)).not.toContain('right');
+
+        const revealedReq = await engine.request({ id: loginReq.id, reveal: true });
+        expect(JSON.stringify(revealedReq.data)).toContain('right');
+
+        const cookiesData = (await engine.cookies({})).data as { value: string }[];
+        expect(cookiesData.every((c) => c.value === '•••')).toBe(true);
+        const revealedCookies = (await engine.cookies({ reveal: true })).data as { value: string }[];
+        expect(revealedCookies.some((c) => c.value !== '•••')).toBe(true);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('secret persistence across restart', () => {
+  test(
+    'S3: a secret typed before a restart still masks the same request afterwards',
+    async () => {
+      const name = nextSession('secret-persist');
+      const engine1 = await createEngine(name);
+      let requestId: string;
+      try {
+        await engine1.open({ url: `${server.origin}/login`, allowWrite: ['127.0.0.1'] });
+        await engine1.act({ ref: await refByName(engine1, 'Email'), kind: 'fill', value: 'a@b.com' });
+        await engine1.act({ ref: await refByName(engine1, 'Contraseña'), kind: 'fill', value: 'right', secret: true });
+        const clickRes = await engine1.act({ ref: await refByName(engine1, 'Entrar'), kind: 'click' });
+        const effects = await engine1.effects({ action: actionId(clickRes) });
+        requestId = (effects.data as { requests: RequestRecord[] }).requests.find(
+          (r) => r.method === 'POST' && new URL(r.url).pathname === '/login',
+        )!.id;
+      } finally {
+        await engine1.shutdown();
+      }
+
+      const engine2 = await createEngine(name);
+      try {
+        const res = await engine2.request({ id: requestId, body: true });
+        expect(res.text).not.toContain('right');
+      } finally {
+        await engine2.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('window cut note', () => {
+  test('R6: the note is appended only when waitForQuiet timed out', async () => {
+    const { withWindowCutNote } = await import('../src/engine/engine.ts');
+    expect(withWindowCutNote('#1 click', true, 5000)).toBe('#1 click · window cut at 5000ms');
+    expect(withWindowCutNote('#1 click', false, 5000)).toBe('#1 click');
+  });
+});
+
+describe('shutdown', () => {
+  test('R17: shutting down twice is a no-op, not a thrown error', async () => {
+    const engine = await createEngine(nextSession('double-shutdown'));
+    await engine.open({ url: `${server.origin}/` });
+    await engine.shutdown();
+    await expect(engine.shutdown()).resolves.toBeUndefined();
+  });
+});
+
+describe('effects scoping', () => {
+  test(
+    'R9: another tab logging during the window does not show up in this action’s effects',
+    async () => {
+      const engine = await createEngine(nextSession('effects-scope'));
+      try {
+        await engine.open({ url: `${server.origin}/popup` });
+        const ref = await refByName(engine, 'Abrir');
+        await engine.act({ ref, kind: 'click' });
+
+        await engine.tabs({ select: 't2' });
+        const gotoPromise = engine.goto({ url: `${server.origin}/popup-target?x=1` });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await engine.tabs({ select: 't1' });
+        await engine.eval({ expr: "console.error('other tab noise')" });
+        const gotoRes = await gotoPromise;
+
+        const effects = await engine.effects({ action: actionId(gotoRes), all: true });
+        expect(effects.text).not.toContain('other tab noise');
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('upload guard', () => {
+  test(
+    'S7: a path outside the session upload dirs is rejected; one inside is allowed',
+    async () => {
+      const engine = await createEngine(nextSession('upload-guard'));
+      try {
+        await engine.open({ url: `${server.origin}/` });
+        // Not part of the public Engine surface: reaches into EngineCore the
+        // same way the GPU test already does, since there is no fixture page
+        // with a file input to drive this end to end through `act`.
+        const core = engine as unknown as {
+          assertUploadAllowed(path: string): void;
+          session?: { uploadDirs: string[] };
+        };
+        expect(() => core.assertUploadAllowed('/etc/hostname')).toThrow(/upload outside allowed dirs/);
+        const uploadDir = core.session!.uploadDirs[0]!;
+        const filePath = join(uploadDir, 'ok.txt');
+        writeFileSync(filePath, 'hi');
+        expect(() => core.assertUploadAllowed(filePath)).not.toThrow();
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('crash recovery', () => {
+  test(
+    'R2: a session whose whole context died relaunches on the next call instead of failing forever',
+    async () => {
+      const engine = await createEngine(nextSession('relaunch'));
+      try {
+        await engine.open({ url: `${server.origin}/` });
+        const core = engine as unknown as { session?: { context: { close(): Promise<void> } } };
+        await core.session!.context.close();
+        const res = await engine.view({});
+        expect(res.text).toBeTruthy();
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+describe('reopen applies params live', () => {
+  test(
+    'R10: open --allow-write on an already-open session lets a previously-blocked write through',
+    async () => {
+      const engine = await createEngine(nextSession('reopen-allow-write'));
+      try {
+        await engine.open({ url: `${server.origin}/shop` });
+        await engine.open({ url: `${server.origin}/shop`, allowWrite: ['127.0.0.1'] });
+        const guardarRef = await refByName(engine, 'Guardar');
+        const res = await engine.act({ ref: guardarRef, kind: 'click' });
+        expect(res.text).not.toContain('write blocked');
       } finally {
         await engine.shutdown();
       }

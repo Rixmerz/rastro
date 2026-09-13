@@ -195,6 +195,15 @@ async function runActionStep(ctx: RunCtx, step: FlowStep, kind: StepKind, label:
           },
         });
         break;
+      case 'forward':
+        result = await core.runAction({
+          kind: 'forward',
+          source: 'flow',
+          perform: async (page) => {
+            await page.goForward({ timeout: core.timeoutMs });
+          },
+        });
+        break;
       case 'reload':
         result = await core.runAction({
           kind: 'reload',

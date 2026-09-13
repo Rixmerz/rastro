@@ -9,7 +9,7 @@
 
 export function installRastroCapture(): void {
   const w = window as unknown as {
-    __rastroCaptureInstalled?: boolean;
+    __rastroCaptureCleanup?: () => void;
     __rastroCapture?: (event: {
       kind: string;
       bundle: Record<string, unknown>;
@@ -18,8 +18,15 @@ export function installRastroCapture(): void {
       ts: number;
     }) => void;
   };
-  if (w.__rastroCaptureInstalled) return;
-  w.__rastroCaptureInstalled = true;
+  // Re-arms rather than no-oping on a flag: a popup's very first navigation
+  // can lose the race with `context.addInitScript` (the same CDP-attach gap
+  // recorder.ts hits), leaving an earlier run's listeners attached to a
+  // document that never becomes interactive while a `__rastroCaptureInstalled`
+  // flag would have looked "done" forever. Tearing down whatever the last
+  // run wired up and re-adding fresh listeners makes every call — from
+  // `addInitScript`, from the per-tab replay loop, or from a caller retrying
+  // after a new document — converge on one working set instead of skipping.
+  w.__rastroCaptureCleanup?.();
 
   // Suppresses the `submit` event fired by the browser's own default action
   // right after a click on a submit button: without this, that one user
@@ -129,80 +136,76 @@ export function installRastroCapture(): void {
   // here avoids recording the same human gesture as two actions.
   const SKIP_CLICK_INPUT_TYPES = new Set(['text', 'password', 'email', 'search', 'number', 'checkbox', 'radio']);
 
-  document.addEventListener(
-    'click',
-    (e) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      const tag = target.tagName.toLowerCase();
-      if (tag === 'option' || tag === 'select') return;
-      if (tag === 'input' && SKIP_CLICK_INPUT_TYPES.has((attr(target, 'type') ?? 'text').toLowerCase())) return;
+  const onClick = (e: Event): void => {
+    const target = e.target as Element | null;
+    if (!target) return;
+    const tag = target.tagName.toLowerCase();
+    if (tag === 'option' || tag === 'select') return;
+    if (tag === 'input' && SKIP_CLICK_INPUT_TYPES.has((attr(target, 'type') ?? 'text').toLowerCase())) return;
 
-      const isSubmitButton =
-        (tag === 'button' && (attr(target, 'type') ?? 'submit').toLowerCase() === 'submit') ||
-        (tag === 'input' && (attr(target, 'type') ?? '').toLowerCase() === 'submit');
-      if (isSubmitButton) lastSubmitClick = { form: target.closest('form'), ts: Date.now() };
+    const isSubmitButton =
+      (tag === 'button' && (attr(target, 'type') ?? 'submit').toLowerCase() === 'submit') ||
+      (tag === 'input' && (attr(target, 'type') ?? '').toLowerCase() === 'submit');
+    if (isSubmitButton) lastSubmitClick = { form: target.closest('form'), ts: Date.now() };
 
-      send('click', target, undefined, false);
-    },
-    true,
-  );
+    send('click', target, undefined, false);
+  };
 
-  document.addEventListener(
-    'change',
-    (e) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      const tag = target.tagName.toLowerCase();
+  const onChange = (e: Event): void => {
+    const target = e.target as Element | null;
+    if (!target) return;
+    const tag = target.tagName.toLowerCase();
 
-      if (tag === 'select') {
-        const select = target as HTMLSelectElement;
-        const option = select.options[select.selectedIndex];
-        send('select', target, option ? option.text : select.value, false);
+    if (tag === 'select') {
+      const select = target as HTMLSelectElement;
+      const option = select.options[select.selectedIndex];
+      send('select', target, option ? option.text : select.value, false);
+      return;
+    }
+
+    if (tag === 'input') {
+      const input = target as HTMLInputElement;
+      const type = (input.type || 'text').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') {
+        send(input.checked ? 'check' : 'uncheck', target, undefined, false);
         return;
       }
+      const isPassword = type === 'password';
+      send('fill', target, isPassword ? '•••' : input.value, isPassword);
+      return;
+    }
 
-      if (tag === 'input') {
-        const input = target as HTMLInputElement;
-        const type = (input.type || 'text').toLowerCase();
-        if (type === 'checkbox' || type === 'radio') {
-          send(input.checked ? 'check' : 'uncheck', target, undefined, false);
-          return;
-        }
-        const isPassword = type === 'password';
-        send('fill', target, isPassword ? '•••' : input.value, isPassword);
-        return;
-      }
+    if (tag === 'textarea') {
+      send('fill', target, (target as HTMLTextAreaElement).value, false);
+    }
+  };
 
-      if (tag === 'textarea') {
-        send('fill', target, (target as HTMLTextAreaElement).value, false);
-      }
-    },
-    true,
-  );
+  const onKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Enter') return;
+    const target = e.target as Element | null;
+    if (!target) return;
+    const tag = target.tagName.toLowerCase();
+    if (tag !== 'input' && tag !== 'textarea') return;
+    send('press', target, 'Enter', false);
+  };
 
-  document.addEventListener(
-    'keydown',
-    (e) => {
-      if (e.key !== 'Enter') return;
-      const target = e.target as Element | null;
-      if (!target) return;
-      const tag = target.tagName.toLowerCase();
-      if (tag !== 'input' && tag !== 'textarea') return;
-      send('press', target, 'Enter', false);
-    },
-    true,
-  );
+  const onSubmit = (e: Event): void => {
+    const target = e.target as Element | null;
+    if (!target) return;
+    const now = Date.now();
+    if (lastSubmitClick && lastSubmitClick.form === target && now - lastSubmitClick.ts < 300) return;
+    send('submit', target, undefined, false);
+  };
 
-  document.addEventListener(
-    'submit',
-    (e) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      const now = Date.now();
-      if (lastSubmitClick && lastSubmitClick.form === target && now - lastSubmitClick.ts < 300) return;
-      send('submit', target, undefined, false);
-    },
-    true,
-  );
+  document.addEventListener('click', onClick, true);
+  document.addEventListener('change', onChange, true);
+  document.addEventListener('keydown', onKeydown, true);
+  document.addEventListener('submit', onSubmit, true);
+
+  w.__rastroCaptureCleanup = () => {
+    document.removeEventListener('click', onClick, true);
+    document.removeEventListener('change', onChange, true);
+    document.removeEventListener('keydown', onKeydown, true);
+    document.removeEventListener('submit', onSubmit, true);
+  };
 }

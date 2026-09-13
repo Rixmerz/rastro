@@ -47,6 +47,14 @@ function escapeRegExpLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// S8 (CWE-94): `condition.request` isn't validated as a request pattern (it
+// only needs to match something at run time, see `checkExpect`), so it can
+// contain anything — including a newline that would close the `//` comment
+// this is emitted into and let the rest of the line run as code.
+function commentSafe(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ');
+}
+
 function toHaveUrlLine(indent: string, path: string): string {
   return `${indent}await expect(page).toHaveURL(new RegExp(${JSON.stringify(escapeRegExpLiteral(path))} + ${URL_SUFFIX_LITERAL}));`;
 }
@@ -124,7 +132,7 @@ function emitAssert(indent: string, condition: Condition): string[] {
   }
   if (condition.url !== undefined) return [toHaveUrlLine(indent, condition.url)];
   if (condition.request !== undefined) {
-    return [`${indent}// assert request ${condition.request} (checked at recording time)`];
+    return [`${indent}// assert request ${commentSafe(condition.request)} (checked at recording time)`];
   }
   return [];
 }
@@ -136,7 +144,7 @@ function emitIf(
 ): string[] {
   const condition = step.if;
   if (condition.request !== undefined) {
-    return [`${indent}// if request ${condition.request} (checked at recording time) — not exportable, step skipped`];
+    return [`${indent}// if request ${commentSafe(condition.request)} (checked at recording time) — not exportable, step skipped`];
   }
 
   const predicate =
@@ -166,6 +174,8 @@ function emitStep(step: FlowStep, indent: string, resp: RespCounter): string[] {
       return emitActionLines(indent, `page.goto(${valueExprFor(raw['goto'] as string)})`, expect, resp);
     case 'back':
       return emitActionLines(indent, 'page.goBack()', expect, resp);
+    case 'forward':
+      return emitActionLines(indent, 'page.goForward()', expect, resp);
     case 'reload':
       return emitActionLines(indent, 'page.reload()', expect, resp);
     case 'click':

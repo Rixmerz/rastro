@@ -151,6 +151,176 @@ describe('human capture', () => {
 });
 
 // ---------------------------------------------------------------------------
+// R4: a fast fill-then-click overlaps two human windows; the click's own
+// effects must land on the click step, not the fill it followed.
+// ---------------------------------------------------------------------------
+
+describe('human capture: overlapping fast gestures (R4)', () => {
+  test(
+    'fill, fill, blur, click without waiting attributes the POST and navigation to the click',
+    async () => {
+      const engine = await EngineCore.create(nextSession('overlap'));
+      const savePath = join(home, 'overlap.yaml');
+      try {
+        await engine.recordStart({ url: `${server.origin}/record` });
+        const page = engine.session!.activePage();
+
+        // No waits between these: the fill's own quiet-wait (up to 5s) is
+        // still running its internal poll when the clave field's change and
+        // the click's DOM notifications arrive, exactly the overlap a fast
+        // real human gesture produces.
+        await page.fill('input[name="nombre"]', 'Ana');
+        await page.fill('input[name="clave"]', 'hunter2');
+        await page.locator('input[name="clave"]').blur();
+        await page.click('[data-testid="guardar"]');
+        await page.waitForURL('**/record/done');
+
+        // 1 (initial open) + fill nombre + fill clave + click.
+        await waitForActionCount(engine, 4);
+
+        const stopRes = await engine.recordStop({ save: savePath });
+        expect(stopRes.text).toContain('recorded 4 steps');
+
+        const flow = parseFlow(readFileSync(savePath, 'utf8'));
+        const clickStep = flow.steps[flow.steps.length - 1] as unknown as {
+          click: unknown;
+          expect?: { url?: string; requests?: string[] };
+        };
+        expect(clickStep.expect?.url).toBe('/record/done');
+        expect(clickStep.expect?.requests).toContain('POST /api/save 2xx');
+
+        // Neither fill step should have inherited the click's effects.
+        const fillSteps = flow.steps.filter(
+          (s) => 'fill' in (s as unknown as Record<string, unknown>),
+        ) as unknown as { expect?: { url?: string; requests?: string[] } }[];
+        expect(fillSteps.length).toBeGreaterThan(0);
+        for (const step of fillSteps) expect(step.expect).toBeUndefined();
+      } finally {
+        await engine.shutdown();
+      }
+
+      // The saved flow replays clean in a fresh session: the expectation
+      // sits on the step that can actually satisfy it.
+      const replay = await createEngine(nextSession('overlap-replay'));
+      try {
+        const result = await replay.flowRun({ file: savePath, params: { clave: 'hunter2' } });
+        const data = result.data as { ok: boolean; lines: string[] };
+        expect(data.ok, data.lines.join('\n')).toBe(true);
+      } finally {
+        await replay.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// R15: a gesture inside a popup records against the popup's own tab.
+// ---------------------------------------------------------------------------
+
+describe('human capture: popup gestures record against their own tab (R15)', () => {
+  test(
+    'a click inside a popup is recorded with the popup tab id, not the opener',
+    async () => {
+      const engine = await EngineCore.create(nextSession('popup-capture'));
+      try {
+        await engine.recordStart({ url: `${server.origin}/popup` });
+        const opener = engine.session!.activePage();
+
+        const [popup] = await Promise.all([opener.waitForEvent('popup'), opener.click('#abrir')]);
+        await popup.waitForLoadState();
+        await waitForActionCount(engine, 2); // open + click "Abrir"
+
+        await popup.click('h1');
+        await waitForActionCount(engine, 3);
+
+        const openerTabId = engine.session!.tabIdForPage(opener);
+        const popupTabId = engine.session!.tabIdForPage(popup);
+        expect(popupTabId).toBeDefined();
+        expect(popupTabId).not.toBe(openerTabId);
+
+        const historyRes = await engine.history({});
+        const actions = historyRes.data as { tabId: string }[];
+        expect(actions[actions.length - 1]!.tabId).toBe(popupTabId);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// S9 (CWE-346): a forged capture call from a child frame is dropped, and
+// masking never trusts the page's own `isPassword` flag.
+// ---------------------------------------------------------------------------
+
+describe('capture trust boundary (S9)', () => {
+  test(
+    'a __rastroCapture call from a child frame is ignored',
+    async () => {
+      const engine = await EngineCore.create(nextSession('frame-forge'));
+      try {
+        await engine.recordStart({ url: `${server.origin}/captcha` });
+        const page = engine.session!.activePage();
+        await waitForActionCount(engine, 1); // just the open
+
+        const child = page.frames().find((f) => f !== page.mainFrame());
+        expect(child).toBeDefined();
+        await child!.evaluate(() => {
+          (window as unknown as { __rastroCapture: (e: unknown) => void }).__rastroCapture({
+            kind: 'click',
+            bundle: { role: 'button', name: 'Forged' },
+            isPassword: false,
+            ts: Date.now(),
+          });
+        });
+
+        // Give the (should-be-rejected) call a moment to land if it weren't filtered.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await engine.recordStop({});
+        const historyRes = await engine.history({});
+        const actions = historyRes.data as { targetName?: string }[];
+        expect(actions.some((a) => a.targetName === 'Forged')).toBe(false);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+
+  test(
+    'secret masking is decided from the bundle inputType, not a forged isPassword flag',
+    async () => {
+      const engine = await EngineCore.create(nextSession('mask-trust'));
+      try {
+        await engine.recordStart({ url: `${server.origin}/record` });
+        const page = engine.session!.activePage();
+        await waitForActionCount(engine, 1);
+
+        await page.evaluate(() => {
+          (window as unknown as { __rastroCapture: (e: unknown) => void }).__rastroCapture({
+            kind: 'fill',
+            bundle: { role: 'textbox', name: 'Clave', inputType: 'password' },
+            value: 'realsecret123',
+            isPassword: false,
+            ts: Date.now(),
+          });
+        });
+        await waitForActionCount(engine, 2);
+
+        const historyRes = await engine.history({});
+        expect(historyRes.text).not.toContain('realsecret123');
+        expect(historyRes.text).toContain('•••');
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Flow runner semantics: expectations, from, if/else.
 // ---------------------------------------------------------------------------
 

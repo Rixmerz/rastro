@@ -49,6 +49,30 @@ describe('waitForQuiet', () => {
     expect(result.elapsed).toBe(1000);
   });
 
+  test('R6: activity the recorder marks "background" (a recurring poll, a periodic tiny DOM tick) never extends the window', async () => {
+    // `waitForQuiet` only ever sees `lastActivity()`; it has no idea *why*
+    // that clock did or didn't move. The recorder's job (see recorder.ts's
+    // `PeriodicTracker`) is to simply never call `markActivity()` for
+    // recurring background noise — which, from this pure function's point of
+    // view, looks exactly like "nothing happened after t=50". This is the
+    // contract recorder.test.ts's own R6 cases rely on.
+    const clock = makeClock(50);
+    // A background ping "fires" every tick (t=100, 150, 200, ...) but never
+    // touches lastActivity, exactly as the recorder would skip it.
+    const result = await waitForQuiet({
+      pending: () => 0,
+      lastActivity: () => 50,
+      now: clock.now,
+      poll: clock.poll,
+      quietMs: 200,
+      maxWindowMs: 5000,
+    });
+    expect(result.timedOut).toBe(false);
+    // Quiet is reached at lastActivity (50) + quietMs (200) = 250, not
+    // stretched out by the background pings still "happening" every tick.
+    expect(result.elapsed).toBe(250);
+  });
+
   test('stays open while a request is pending, then quiets once it clears', async () => {
     const clock = makeClock(50);
     const pendingUntil = 300;

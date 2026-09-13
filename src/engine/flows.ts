@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { z } from 'zod';
+import type { Page } from 'playwright-core';
 import type { ActionRecord, LocatorBundle, RequestRecord, RpcResult } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
 import { actionsToFlow, parseFlow, stringifyFlow, type Flow, type FlowStep } from '../flow/format.ts';
@@ -108,6 +109,15 @@ export class FlowController {
   private continuedFlow: Flow | undefined;
   private continuedSteps: FlowStep[] = [];
 
+  // R4: browser-clock (`event.ts`, Date.now() in the page) offset from
+  // engine-clock (`action.t0`), calibrated once from the first captured
+  // event. Lets later events' *real* arrival order be recovered even though
+  // the capture queue only gets around to starting their `runAction` call
+  // well after they actually happened on the page (a fast human/synthetic
+  // driver queues fill+blur+click faster than one action's quiet-wait).
+  private clockOffset: number | undefined;
+  private lastHumanActionId: number | undefined;
+
   constructor(core: EngineCore) {
     this.core = core;
   }
@@ -136,6 +146,8 @@ export class FlowController {
     }
 
     this.recordedIds = [];
+    this.clockOffset = undefined;
+    this.lastHumanActionId = undefined;
     if (params.url) {
       // The initial navigation is "the first action recorded after start"
       // (recordStop's contract): a flow saved from this session needs it to
@@ -199,11 +211,31 @@ export class FlowController {
     if (!session) return;
 
     if (!this.bindingInstalled) {
-      await session.context.exposeBinding('__rastroCapture', (_source, event: unknown) => {
+      // S9: a hostile cross-origin iframe can call an exposed binding too;
+      // only trust gestures reported from the page's own top-level frame.
+      await session.context.exposeBinding('__rastroCapture', (source, event: unknown) => {
+        if (source.frame !== source.page.mainFrame()) return;
         const captured = event as CapturedEvent;
-        this.captureQueue = this.captureQueue.then(() => this.handleCaptureEvent(captured)).catch(() => {});
+        // Capture events are serialized through this queue in arrival order
+        // (each `.then()` waits for the previous handler, including its full
+        // `runAction` call), so `handleCaptureEvent` sees them one at a time.
+        this.captureQueue = this.captureQueue.then(() => this.handleCaptureEvent(captured, source.page)).catch(() => {});
       });
       await session.context.addInitScript(installRastroCapture);
+      // R15: `addInitScript` can lose the race with a popup's very first
+      // navigation (the same CDP-attach timing gap noted for the recorder),
+      // leaving a freshly opened tab without a working listener even though
+      // `installCapture`'s own per-tab loop below only ever covers tabs that
+      // already existed. Reapply on every navigation of every tab opened
+      // from here on — safe to repeat, since `installRastroCapture` re-arms
+      // (tears down and re-adds) rather than skipping when already run.
+      session.context.on('page', (page) => {
+        const install = (): void => {
+          void page.evaluate(installRastroCapture).catch(() => {});
+        };
+        install();
+        page.on('domcontentloaded', install);
+      });
       this.bindingInstalled = true;
     }
 
@@ -212,7 +244,7 @@ export class FlowController {
     }
   }
 
-  private async handleCaptureEvent(event: CapturedEvent): Promise<void> {
+  private async handleCaptureEvent(event: CapturedEvent, sourcePage: Page): Promise<void> {
     if (!this.capturing) return;
     const kind = CAPTURE_KIND_MAP[event.kind];
     if (!kind) return;
@@ -220,18 +252,85 @@ export class FlowController {
     const targetName =
       event.bundle.label ?? event.bundle.name ?? event.bundle.text ?? event.bundle.placeholder ?? event.bundle.testId ?? '';
 
-    const result = await this.core.runAction({
-      kind,
-      source: 'human',
-      target: event.bundle,
-      targetName,
-      value: event.value,
-      secret: event.isPassword,
-      perform: async () => {},
-    });
+    // S9: never trust the page's own `isPassword` flag to decide masking —
+    // recheck against the resolved bundle's `inputType`, which the capture
+    // script derives from the element's actual `type` attribute.
+    const secret = event.bundle.inputType === 'password';
+
+    // R15: record the gesture against the tab it actually came from, not
+    // whatever tab happens to be "active" (e.g. a popup opened mid-flow).
+    const session = this.core.session;
+    const tabId = session?.tabIdForPage(sourcePage);
+    const previousActiveTabId = session?.activeTabId;
+    if (session && tabId !== undefined && tabId !== session.activeTabId) session.activeTabId = tabId;
+
+    const prevActionId = this.lastHumanActionId;
+    let result: RpcResult;
+    try {
+      result = await this.core.runAction({
+        kind,
+        source: 'human',
+        target: event.bundle,
+        targetName,
+        value: event.value,
+        secret,
+        perform: async () => {},
+      });
+    } finally {
+      if (session && previousActiveTabId !== undefined) session.activeTabId = previousActiveTabId;
+    }
 
     const id = (result.data as { action: number } | null)?.action;
-    if (id !== undefined) this.recordedIds.push(id);
+    if (id === undefined) return;
+    this.recordedIds.push(id);
+
+    // R4: a new capture event closes the previous human action's window
+    // immediately. `action.t0` reflects when this queue *got around* to
+    // starting the action's `runAction` call, which can be seconds after
+    // the gesture actually happened on the page if an earlier action's
+    // quiet-wait was still running (a fast fill-then-click lands both
+    // events' DOM notifications before the fill's own window closes). The
+    // page's own clock (`event.ts`) does not have that lag, so it's used
+    // to recover each event's real arrival order and reassign anything
+    // that happened at or after this event away from the previous action.
+    const action = this.core.store.getAction(id);
+    if (action) {
+      if (this.clockOffset === undefined) {
+        this.clockOffset = event.ts - action.t0;
+      } else {
+        const arrival = event.ts - this.clockOffset;
+        this.core.store.updateAction(id, { t0: arrival });
+        if (prevActionId !== undefined) this.closePreviousWindow(prevActionId, id, arrival);
+      }
+    }
+    this.lastHumanActionId = id;
+  }
+
+  /** Reassigns anything still attributed to `fromId` that happened at or
+   * after `cutoff` to `toId` instead — the effect of ending `fromId`'s
+   * window right when the next human gesture arrived. */
+  private closePreviousWindow(fromId: number, toId: number, cutoff: number): void {
+    for (const req of this.core.store.requests({ actionId: fromId })) {
+      if (req.t >= cutoff) this.core.store.setRequestAttribution(req.id, toId, 'attributed');
+    }
+    for (const ev of this.core.store.events({ actionId: fromId })) {
+      if (ev.t >= cutoff) this.core.store.setEventAttribution([ev.id], toId, 'attributed');
+    }
+
+    // A navigation is a fact recorded on the action itself (`urlAfter`), not
+    // an event in the store: `fromId`'s `runAction` call didn't read the
+    // page's URL until its own (overlapped) quiet-wait resolved, by which
+    // point the click had already navigated — so it wrongly carries that
+    // navigation as its own, while `toId` (whose "before" snapshot already
+    // saw the post-navigation URL, since it started even later) shows no
+    // change at all. Move the transition to the action that actually caused
+    // it.
+    const from = this.core.store.getAction(fromId);
+    const to = this.core.store.getAction(toId);
+    if (from?.urlAfter !== undefined && from.urlAfter !== from.urlBefore && to && to.urlBefore === to.urlAfter) {
+      this.core.store.updateAction(fromId, { urlAfter: from.urlBefore });
+      this.core.store.updateAction(toId, { urlBefore: from.urlBefore, urlAfter: from.urlAfter });
+    }
   }
 
   // --- flow file operations ------------------------------------------------

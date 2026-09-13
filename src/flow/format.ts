@@ -30,6 +30,7 @@ export type FlowStep = StepBase &
     | { open: string }
     | { goto: string }
     | { back: true }
+    | { forward: true }
     | { reload: true }
     | { click: Target; expect?: Expect }
     | { dblclick: Target; expect?: Expect }
@@ -60,6 +61,7 @@ export type StepKind =
   | 'open'
   | 'goto'
   | 'back'
+  | 'forward'
   | 'reload'
   | 'click'
   | 'dblclick'
@@ -75,7 +77,7 @@ export type StepKind =
   | 'if';
 
 const STEP_KINDS: readonly StepKind[] = [
-  'open', 'goto', 'back', 'reload', 'click', 'dblclick', 'hover', 'check',
+  'open', 'goto', 'back', 'forward', 'reload', 'click', 'dblclick', 'hover', 'check',
   'uncheck', 'fill', 'type', 'select', 'press', 'wait', 'assert', 'if',
 ];
 
@@ -129,7 +131,16 @@ const paramSchema = z.strictObject({
   default: z.string().optional(),
 });
 
-const paramsSchema = z.record(z.string(), paramSchema);
+// S8 (CWE-94): a param name is emitted as a bare identifier into generated
+// Playwright code (`const <name> = process.env...`) and substituted into
+// flow values — reject anything that isn't a valid JS identifier so it can
+// never inject code there.
+const PARAM_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+const paramsSchema = z.record(
+  z.string().regex(PARAM_NAME_RE, 'must be a valid identifier'),
+  paramSchema,
+);
 
 function requireObject(raw: unknown, path: string): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -223,6 +234,9 @@ function parseStep(raw: unknown, path: string): FlowStep {
       break;
     case 'back':
       step = { back: parseTrueValue(obj['back'], stepPath) };
+      break;
+    case 'forward':
+      step = { forward: parseTrueValue(obj['forward'], stepPath) };
       break;
     case 'reload':
       step = { reload: parseTrueValue(obj['reload'], stepPath) };
@@ -545,7 +559,10 @@ export function actionsToFlow(
         if (action.secret) {
           const base = action.target.label ?? action.target.name;
           const slug = base ? slugify(base) : '';
-          const paramName = slug || `secret${++secretCounter}`;
+          // A slug can start with a digit (a label like "2FA code"), which
+          // isn't a valid identifier — parseFlow's PARAM_NAME_RE would then
+          // reject the very flow this just generated.
+          const paramName = (slug && !/^[0-9]/.test(slug) ? slug : slug ? `p_${slug}` : '') || `secret${++secretCounter}`;
           params[paramName] = { secret: true };
           value = `{{${paramName}}}`;
         }
