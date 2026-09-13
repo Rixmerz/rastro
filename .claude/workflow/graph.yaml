@@ -1,0 +1,269 @@
+metadata:
+  name: "Feature Development"
+  description: "Structured 6-phase feature development: orient, design, implement, test, validate, commit."
+  version: "1.0.0"
+  type: "graph"
+  author: "vise"
+
+nodes:
+  - id: "orient"
+    name: "Orient"
+    is_start: true
+    # The prompt below says "Read-only exploration ... before touching anything";
+    # without this list that was documentation, not a gate. Bash stays open —
+    # reading the repo legitimately needs git/grep/ls.
+    tools_blocked:
+      - "Edit"
+      - "Write"
+      - "MultiEdit"
+      - "NotebookEdit"
+    prompt_injection: |
+      PHASE: ORIENT
+      Read-only exploration. Understand the codebase context before touching anything.
+      1. Read CLAUDE.md and relevant source files.
+      2. Run experience_query and graph_timeline to surface prior learnings.
+      3. State the feature goal and acceptance criteria clearly.
+      Signal: say "oriented" when ready to design.
+
+  - id: "design"
+    name: "Design"
+    # "No code yet" in the prompt below is the whole point of a design phase.
+    # Enforced here so the next node is reached by decision, not by drift.
+    tools_blocked:
+      - "Edit"
+      - "Write"
+      - "MultiEdit"
+      - "NotebookEdit"
+    prompt_injection: |
+      PHASE: DESIGN
+      Decide the implementation approach. No code yet.
+      1. Identify files to create/modify and their responsibilities.
+      2. Define public interfaces and data shapes.
+      3. Note dependencies, migrations, or config changes needed.
+      Signal: say "design complete" when ready to implement.
+
+  - id: "spec"
+    name: "Spec"
+    # The mandatory OpenSpec gate. Everything upstream of here is reversible
+    # thinking; everything downstream writes code. This is the last node where
+    # "what are we actually building" is still cheap to answer, so it is the
+    # one place the answer is required in writing.
+    #
+    # Edit/Write stay OPEN — this phase authors markdown under openspec/. vise
+    # has no path-scoped blocking (tools_blocked is tool-name only), so nothing
+    # here physically stops an agent from editing src/ instead. The gate is what
+    # makes it mandatory: spec-to-implement is validators_green, so the phase
+    # cannot be left until a well-formed change proposal exists on disk.
+    #
+    # `deltas` is fail-closed and needs no external binary — it reads
+    # openspec/changes/*/specs/**/*.md directly. `validated` shells out to the
+    # openspec CLI and skip-passes when it is absent, so a machine without the
+    # Node package loses strictness, never the structural requirement.
+    validators:
+      - type: openspec
+        require: deltas
+        weight: 1.0
+      - type: openspec
+        require: validated
+        weight: 0.5
+    prompt_injection: |
+      PHASE: SPEC — OpenSpec proposal (mandatory)
+      No implementation code. Write the change proposal that says what this
+      feature changes about the system's contract.
+      1. Create the change:  openspec new change <kebab-case-name>
+      2. Ask the CLI what to write and in what order:
+           openspec status --change <name> --json
+           openspec instructions <artifact> --change <name> --json
+         Artifacts for the spec-driven schema: proposal -> specs -> design -> tasks.
+      3. The specs artifact is the one this gate actually checks. Under
+         openspec/changes/<name>/specs/<capability>/spec.md write delta headers
+         (## ADDED Requirements / ## MODIFIED Requirements / ## REMOVED
+         Requirements) and give EVERY "### Requirement:" at least one
+         "#### Scenario:" block. A requirement with no scenario is the single
+         most common reason this gate goes red.
+      4. tasks.md becomes the implement phase's checklist — write it as the
+         steps you will actually tick off, not as a summary.
+      5. Verify before advancing:  openspec validate --all --strict
+      Signal: the gate opens on its own once the deltas validate — no phrase.
+
+  - id: "implement"
+    name: "Implement"
+    validators:
+      - type: tests_pass
+        weight: 1.0
+    # Uncomment as an ADDITIONAL entry under the `validators:` key above — do not
+    # re-declare `validators:`, a duplicate key silently drops tests_pass.
+    #   - {type: capability, capability: "validate.web.layout", args: {target: "<url>", contract: {}}, weight: 1.0}
+    prompt_injection: |
+      PHASE: IMPLEMENT
+      Work the checklist in openspec/changes/<name>/tasks.md — that file is the
+      plan of record, not a summary of it. Tick each box as it lands; the
+      validate phase will not open until every box is ticked.
+      Build the code following the design. Delegate execution to the matching
+      specialist (see the orchestration skill's fleet table): backend work to
+      vise:backend-<lang>, UI to vise:frontend, schema to vise:db-migrator.
+      Independent streams (backend + frontend + db) → dispatch in parallel,
+      partitioned by file ownership. Do trivial/glue edits yourself.
+      1. Implement layer by layer: data → service → handler.
+      2. Match existing naming and error-handling conventions.
+      3. Keep changes focused — avoid unrelated refactors.
+      Signal: say "implementation done" when code is complete.
+
+  - id: "test"
+    name: "Test"
+    validators:
+      - type: tests_pass
+        weight: 1.0
+      - type: lint_pass
+        weight: 0.5
+    # Coverage gate — uncomment ONE line and set the threshold this repo actually
+    # holds today (ratchet upward; a threshold nobody meets gets overridden, and an
+    # override habit is worse than no gate). No dedicated validator type is needed:
+    # every coverage tool already exits nonzero on its own threshold flag, which is
+    # all command_exit checks. Ships commented because the test-to-validate edge is
+    # validators_green (ALL must pass) and command_exit fails closed on a missing
+    # binary — a live entry would hard-block every repo without that tool installed.
+    #   - {type: command_exit, cmd: ["pytest", "--cov", "--cov-fail-under=80"], weight: 0.5}
+    #   - {type: command_exit, cmd: ["npx", "jest", "--coverage"], weight: 0.5}  # thresholds live in jest.config
+    #   - {type: command_exit, cmd: ["cargo", "llvm-cov", "--fail-under-lines", "80"], weight: 0.5}
+    #   - {type: command_exit, cmd: ["go", "tool", "cover", "-func=coverage.out"], weight: 0.5}
+    # Mutation testing (mutmut, stryker, cargo-mutants) is NOT a node gate: a full
+    # run takes minutes to hours and would stall every traversal. Run it in CI or
+    # nightly and treat surviving mutants as a backlog, not a transition blocker.
+    prompt_injection: |
+      PHASE: TEST
+      Add or update tests covering the new behavior.
+      1. Write unit tests for business logic.
+      2. Add integration tests for API/DB boundaries.
+      3. Cover every return path of the new code, including the guard-returns
+         and error branches — a passing suite that never enters the new branch
+         is the false green this phase exists to catch.
+      4. Run the test suite and confirm all pass.
+      Signal: say "tests passing" when suite is green.
+
+  - id: "validate"
+    name: "Validate"
+    # The phase named "validate" validated nothing mechanically — its prompt says
+    # "run linter and type checker" and the gate opened on the agent's word. Both
+    # of these fail OPEN (no linter on PATH / no changed .py → pass, reason in
+    # evidence), so they cannot block a repo that doesn't use them.
+    validators:
+      - type: lint_pass
+        weight: 0.5
+      - type: lsp_clean
+        weight: 0.3
+      # Closes the loop the spec phase opened: the change that authorised this
+      # work must be fully ticked off before the commit phase is reachable. A
+      # node gate runs on traverse OUT of its node, so this belongs here and not
+      # on `commit` — an is_end node never transitions and its validators would
+      # never run.
+      - type: openspec
+        require: tasks_complete
+        weight: 1.0
+    # Cross-system features (form→CRM, webhook→DB, payment, OAuth) MUST pass a
+    # LIVE end-to-end before "done": a real request to the deployed entrypoint +
+    # assert the side-effect record exists in the target system. Green unit tests
+    # are necessary, NOT sufficient (root cause: a `recipients: []` guard-return
+    # silently skipped the CRM call while 160 tests stayed green).
+    # Uncomment for boundary-crossing features and
+    # fill the real entrypoint + record assertion. capability validate.integration.e2e
+    # ships UNBOUND — capability_audit surfaces it as a GAP; bind via capability_set.
+    # Uncomment as ADDITIONAL entries under the `validators:` key above — do not
+    # re-declare `validators:`, a duplicate key silently drops lint_pass/lsp_clean.
+    #   - type: capability
+    #     capability: "validate.integration.e2e"
+    #     args:
+    #       target: "<deployed entrypoint URL>"
+    #       method: "POST"
+    #       payload: {}
+    #       assert: {system: "<crm|db|payment>", record_query: "<lookup>", expect: {}}
+    #     weight: 1.0
+    prompt_injection: |
+      PHASE: VALIDATE
+      Final quality check before committing.
+      1. Run linter and type checker (ruff, mypy, tsc, cargo clippy).
+      2. Fix every linter/type-checker error before proceeding.
+      3. If this feature crosses a SYSTEM BOUNDARY (3rd-party API, CRM,
+         webhook, external DB, payment, OAuth): the validate.integration.e2e
+         node-gate validator MUST pass — a LIVE request to the deployed
+         entrypoint + assert the side-effect record exists in the target
+         system. Green unit tests are NOT sufficient. Run capability_audit()
+         — it takes no capability argument, it audits them all — and check
+         whether validate.integration.e2e appears in the returned "unresolved"
+         list. If it does, it is unbound: that is a GAP — bind via
+         capability_set, never fabricate green.
+      4. Confirm no regressions in the broader test suite.
+      Signal: say "validated" when all checks pass.
+
+  - id: "commit"
+    name: "Commit"
+    is_end: true
+    prompt_injection: |
+      PHASE: COMMIT
+      Create a well-formed commit following project conventions.
+      1. Fold the change's deltas into the living specs and retire it:
+           openspec archive <name>
+         Skipping this leaves openspec/specs/ describing a system that no
+         longer exists, and the next change's deltas get written against a
+         stale baseline.
+      2. Stage the code AND the openspec/ changes together — the spec and the
+         code it describes belong in one commit.
+      3. Use conventional commit format: feat: <description>
+      4. Include a "Why:" body line explaining the motivation.
+      Signal: commit created — workflow complete.
+
+edges:
+  - id: "orient-to-design"
+    from: "orient"
+    to: "design"
+    condition:
+      type: "phrase"
+      phrases:
+        - "oriented"
+        - "next phase"
+        - "advance"
+
+  - id: "design-to-spec"
+    from: "design"
+    to: "spec"
+    condition:
+      type: "phrase"
+      phrases:
+        - "design complete"
+        - "next phase"
+        - "advance"
+
+  # validators_green, not a phrase: a phrase edge here would let the agent
+  # declare the proposal written and walk into implement with nothing on disk,
+  # which is the exact failure the spec phase exists to prevent.
+  - id: "spec-to-implement"
+    from: "spec"
+    to: "implement"
+    condition:
+      type: "validators_green"
+
+  - id: "implement-to-test"
+    from: "implement"
+    to: "test"
+    condition:
+      type: "validators_green"
+
+  - id: "test-to-validate"
+    from: "test"
+    to: "validate"
+    condition:
+      type: "phrase"
+      phrases:
+        - "tests passing"
+        - "next phase"
+        - "advance"
+
+  - id: "validate-to-commit"
+    from: "validate"
+    to: "commit"
+    condition:
+      type: "phrase"
+      phrases:
+        - "validated"
+        - "next phase"
+        - "advance"

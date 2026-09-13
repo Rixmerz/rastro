@@ -3,3 +3,4 @@ dist/
 .rastro/
 *.har
 *.trace.json
+.vise/
