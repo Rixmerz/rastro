@@ -89,7 +89,7 @@ describe('login flow', () => {
       console.log(`/panel view: ${panelTokens} tokens`);
 
       const id = actionId(clickRes);
-      const effects = await engine.effects({ id });
+      const effects = await engine.effects({ action: id });
       expect(effects.text).toContain('POST');
       expect(effects.text).toContain('/login');
       expect(effects.text).not.toContain('right');
@@ -129,7 +129,7 @@ describe('attribution accuracy', () => {
       const results: { scenario: string; method: string; path: string; expected: string; actual: string }[] = [];
 
       async function collect(scenario: keyof typeof GROUND_TRUTH, id: number): Promise<void> {
-        const effects = await engine.effects({ id, all: true });
+        const effects = await engine.effects({ action: id, all: true });
         const requests = (effects.data as { requests: RequestRecord[] }).requests;
         for (const expected of GROUND_TRUTH[scenario]) {
           const match = requests.find(
@@ -396,20 +396,20 @@ describe('exports', () => {
         await engine.act({ ref: await refByName(engine, 'Contraseña'), kind: 'fill', value: 'right', secret: true });
         await engine.act({ ref: await refByName(engine, 'Entrar'), kind: 'click' });
 
-        const har = await engine.export({ kind: 'har' });
+        const har = await engine.export({ format: 'har' });
         const harJson = JSON.parse(readFileSync((har.data as { file: string }).file, 'utf8')) as {
           log: { entries: unknown[] };
         };
         expect(harJson.log.entries.length).toBeGreaterThan(0);
 
-        const perfetto = await engine.export({ kind: 'perfetto' });
+        const perfetto = await engine.export({ format: 'perfetto' });
         const perfettoJson = JSON.parse(readFileSync((perfetto.data as { file: string }).file, 'utf8')) as {
           traceEvents: { ph: string }[];
         };
         expect(perfettoJson.traceEvents.some((e) => e.ph === 'B')).toBe(true);
         expect(perfettoJson.traceEvents.some((e) => e.ph === 'E')).toBe(true);
 
-        const pwTrace = await engine.export({ kind: 'pw-trace' });
+        const pwTrace = await engine.export({ format: 'pw-trace' });
         expect(existsSync((pwTrace.data as { file: string }).file)).toBe(true);
 
         const traceRes = await engine.trace({});
