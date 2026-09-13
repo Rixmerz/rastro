@@ -2,6 +2,18 @@
   "name": "rastro",
   "version": "0.1.0",
   "description": "Browser CLI for AI agents: minimal view, effect summaries, causal event trace, investigation on demand.",
-  "author": "rixmerz",
-  "license": "Apache-2.0"
+  "author": {
+    "name": "Juan Pablo Diaz",
+    "email": "juanpablo516@gmail.com"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Rixmerz/rastro",
+  "repository": "https://github.com/Rixmerz/rastro",
+  "keywords": [
+    "browser",
+    "ai-agents",
+    "playwright",
+    "cdp",
+    "trace"
+  ]
 }
