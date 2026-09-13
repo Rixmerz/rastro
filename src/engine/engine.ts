@@ -44,6 +44,7 @@ import { Session, type TabRecord } from './session.ts';
 import { Recorder } from './recorder.ts';
 import { detectBlocked } from './blocked.ts';
 import { VERSION } from '../version.ts';
+import { FlowController } from './flows.ts';
 
 const OpenParamsSchema = z.object({
   url: z.string().optional(),
@@ -113,7 +114,10 @@ interface SessionConfig {
   pwTrace: boolean;
 }
 
-interface RunActionCtx {
+/** Passed to `perform`; a target step (flow/human capture) can seed
+ * `ctx.target` up front by passing `RunActionInput.target` instead of
+ * computing it from a live `Locator` mid-perform, the way `act()` does. */
+export interface RunActionCtx {
   beforeTree: AriaNode[];
   target?: LocatorBundle;
   targetName?: string;
@@ -121,10 +125,15 @@ interface RunActionCtx {
   secret: boolean;
 }
 
-interface RunActionInput {
+/** Input to `runAction`, the pipeline every action (agent `act`, a flow step,
+ * a captured human event) funnels through. `target`, when provided, is a
+ * pre-resolved locator bundle (from a flow step, or from the in-page capture
+ * script) rather than one `runAction` needs to derive from `ref`. */
+export interface RunActionInput {
   kind: ActionKind;
   source: ActionRecord['source'];
   ref?: string;
+  target?: LocatorBundle;
   value?: string;
   secret?: boolean;
   targetName?: string;
@@ -149,6 +158,7 @@ export class EngineCore implements Engine {
   // events recorded by the previous daemon and steal their attribution.
   private readonly sessionStartEpoch: number;
   private config: SessionConfig = { quietMs: 500, maxWindowMs: 5000, timeoutMs: 30000, pwTrace: false };
+  private readonly flows: FlowController;
 
   private constructor(paths: SessionPaths) {
     this.paths = paths;
@@ -166,6 +176,7 @@ export class EngineCore implements Engine {
     }
     this.bodies = new BodyStore(paths.bodies);
     this.recorder = new Recorder(this.store, this.bodies, () => this.now());
+    this.flows = new FlowController(this);
   }
 
   static async create(sessionName: string): Promise<EngineCore> {
@@ -190,7 +201,9 @@ export class EngineCore implements Engine {
     return this.session;
   }
 
-  private async ensureAlive(): Promise<Page> {
+  /** Public for the flow runner and human-capture handler: both need a live
+   * page outside of an action (waits, condition checks, capture install). */
+  async ensureAlive(): Promise<Page> {
     const session = this.requireSession();
     if (session.needsRecovery()) {
       const page = await session.recover();
@@ -375,9 +388,17 @@ export class EngineCore implements Engine {
     return { text: formatDetail(detail), data: detail };
   }
 
+  /** Timeout (ms) actions and waits should use; set by `open`'s params. */
+  get timeoutMs(): number {
+    return this.config.timeoutMs;
+  }
+
   // --- the action pipeline ---------------------------------------------
 
-  private async runAction(input: RunActionInput): Promise<RpcResult> {
+  /** Public: the flow runner and the human-capture handler both drive
+   * actions (source 'flow'/'human') through this pipeline directly, rather
+   * than through the source-'agent' RPC methods above. */
+  async runAction(input: RunActionInput): Promise<RpcResult> {
     const page = await this.ensureAlive();
     const session = this.requireSession();
     const tabId = session.activeTabId;
@@ -412,6 +433,7 @@ export class EngineCore implements Engine {
     const ctx: RunActionCtx = { beforeTree, secret: input.secret ?? false };
     if (input.value !== undefined) ctx.value = input.value;
     if (input.targetName !== undefined) ctx.targetName = input.targetName;
+    if (input.target !== undefined) ctx.target = input.target;
 
     // Marks the action itself as activity, so the quiet check on the very
     // first loop iteration (before any poll) never fires on a stale
@@ -923,23 +945,23 @@ export class EngineCore implements Engine {
     return { text: 'closed', data: null };
   }
 
-  async recordStart(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async recordStart(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.recordStart(rawParams);
   }
-  async recordStop(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async recordStop(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.recordStop(rawParams);
   }
-  async flowSave(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async flowSave(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.flowSave(rawParams);
   }
-  async flowRun(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async flowRun(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.flowRun(rawParams);
   }
-  async flowExport(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async flowExport(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.flowExport(rawParams);
   }
-  async flowImport(): Promise<RpcResult> {
-    throw new RastroError('not implemented yet', 'coming in phase 2');
+  async flowImport(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return this.flows.flowImport(rawParams);
   }
 }
 

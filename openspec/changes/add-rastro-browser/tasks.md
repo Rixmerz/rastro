@@ -27,10 +27,10 @@
 
 ## 4. Flows and human recording
 
-- [ ] 4.1 `src/flow/capture-script.ts` and record start/stop in the engine
-- [ ] 4.2 `src/flow/runner.ts` run, `--from`, params, expectations, conditions, continue recording
-- [ ] 4.3 `flow save`, `flow export`, `flow import` wired to engine and CLI
-- [ ] 4.4 Integration tests: headless capture via synthetic page events, save, run, export
+- [x] 4.1 `src/flow/capture-script.ts` and record start/stop in the engine
+- [x] 4.2 `src/flow/runner.ts` run, `--from`, params, expectations, conditions, continue recording
+- [x] 4.3 `flow save`, `flow export`, `flow import` wired to engine and CLI
+- [x] 4.4 Integration tests: headless capture via synthetic page events, save, run, export
 
 ## 5. Integrations
 
@@ -40,7 +40,7 @@
 
 ## 6. Validation
 
-- [ ] 6.1 typecheck, lint, full test suite green
+- [x] 6.1 typecheck, lint, full test suite green
 - [ ] 6.2 Adversarial review and security audit; fixes applied
 - [ ] 6.3 Real-site token measurement and GPU check (`fuser /dev/nvidia*`)
 - [ ] 6.4 Install `rastro` binary on PATH and the plugin locally
