@@ -11,19 +11,19 @@
 
 ## 2. Engine
 
-- [ ] 2.1 `src/engine/session.ts` launch, contexts, tabs, dialogs, downloads, popups, crash relaunch, write guard
-- [ ] 2.2 `src/engine/recorder.ts` CDP events, bodies, cookie/storage diffs, mutation counters
-- [ ] 2.3 `src/attribution/quiet.ts` and `src/perception/locators.ts`
-- [ ] 2.4 `src/engine/blocked.ts` CAPTCHA / 2FA / bot block detection
-- [ ] 2.5 `src/format/*.ts` summaries, history, effects, trace, request, curl
-- [ ] 2.6 `src/engine/engine.ts` all browsing and investigation RPC methods
-- [ ] 2.7 Integration tests on fixtures: view token budget, act summary, stale ref, policies, write guard, secrets, attribution >= 90%
+- [x] 2.1 `src/engine/session.ts` launch, contexts, tabs, dialogs, downloads, popups, crash relaunch, write guard
+- [x] 2.2 `src/engine/recorder.ts` CDP events, bodies, cookie/storage diffs, mutation counters
+- [x] 2.3 `src/attribution/quiet.ts` and `src/perception/locators.ts`
+- [x] 2.4 `src/engine/blocked.ts` CAPTCHA / 2FA / bot block detection
+- [x] 2.5 `src/format/*.ts` summaries, history, effects, trace, request, curl
+- [x] 2.6 `src/engine/engine.ts` all browsing and investigation RPC methods
+- [x] 2.7 Integration tests on fixtures: view token budget, act summary, stale ref, policies, write guard, secrets, attribution >= 90%
 
 ## 3. Daemon and CLI
 
-- [ ] 3.1 `src/daemon/server.ts` and `client.ts` with auto-spawn, stale socket, idle exit
-- [ ] 3.2 `src/cli/main.ts` commands, `--json`, 4 KB to file, exit codes
-- [ ] 3.3 End-to-end CLI test against fixtures
+- [x] 3.1 `src/daemon/server.ts` and `client.ts` with auto-spawn, stale socket, idle exit
+- [x] 3.2 `src/cli/main.ts` commands, `--json`, 4 KB to file, exit codes
+- [x] 3.3 End-to-end CLI test against fixtures
 
 ## 4. Flows and human recording
 
@@ -34,9 +34,9 @@
 
 ## 5. Integrations
 
-- [ ] 5.1 `src/mcp/server.ts` with resource links
-- [ ] 5.2 `plugin/` skill (<= 1500 tokens) + references, `navegador` agent, `.mcp.json`, plugin.json
-- [ ] 5.3 README
+- [x] 5.1 `src/mcp/server.ts` with resource links
+- [x] 5.2 `plugin/` skill (<= 1500 tokens) + references, `navegador` agent, `.mcp.json`, plugin.json
+- [x] 5.3 README
 
 ## 6. Validation
 
