@@ -1,7 +1,7 @@
 // Browser/context/page lifecycle: tabs registry, dialog policy, downloads,
 // popups, crash detection with lazy relaunch, and the write guard.
 
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import type { SessionPaths } from '../core/paths.ts';
@@ -41,6 +41,42 @@ function hostAllowed(host: string, allowlist: string[]): boolean {
   return allowlist.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
 
+const EGL_VENDOR_DIR = '/usr/share/glvnd/egl_vendor.d';
+const VULKAN_ICD_DIR = '/usr/share/vulkan/icd.d';
+
+/**
+ * Environment for the browser process. `--disable-gpu` alone still lets
+ * Chromium's gpu-process load libEGL_nvidia and open /dev/nvidiactl (measured
+ * on a muxless laptop), which keeps a discrete NVIDIA GPU awake. When NVIDIA's
+ * vendor files are installed, point GLVND and the Vulkan loader at the
+ * non-NVIDIA ones instead. Explicit user values win; RASTRO_KEEP_GPU_ENV=1
+ * disables the override.
+ */
+export function browserEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env = Object.fromEntries(Object.entries(base).filter((e): e is [string, string] => e[1] !== undefined));
+  if (base.RASTRO_KEEP_GPU_ENV === '1') return env;
+  const list = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((f) => f.endsWith('.json'));
+    } catch {
+      return [];
+    }
+  };
+  const egl = list(EGL_VENDOR_DIR);
+  if (egl.some((f) => f.includes('nvidia')) && env.__EGL_VENDOR_LIBRARY_FILENAMES === undefined) {
+    const others = egl.filter((f) => !f.includes('nvidia')).map((f) => join(EGL_VENDOR_DIR, f));
+    if (others.length) env.__EGL_VENDOR_LIBRARY_FILENAMES = others.join(':');
+    env.__GLX_VENDOR_LIBRARY_NAME ??= 'mesa';
+  }
+  const icds = list(VULKAN_ICD_DIR);
+  if (icds.some((f) => f.includes('nvidia')) && env.VK_ICD_FILENAMES === undefined && env.VK_DRIVER_FILES === undefined) {
+    const others = icds.filter((f) => !f.includes('nvidia')).map((f) => join(VULKAN_ICD_DIR, f));
+    if (others.length) env.VK_ICD_FILENAMES = others.join(':');
+  }
+  env.CUDA_VISIBLE_DEVICES ??= '';
+  return env;
+}
+
 export class Session {
   readonly context: BrowserContext;
   readonly downloadsPath: string;
@@ -70,6 +106,7 @@ export class Session {
       executablePath: resolveExecutablePath(),
       headless: !headed,
       args,
+      env: browserEnv(),
       acceptDownloads: true,
       downloadsPath: paths.downloads,
       viewport: { width: 1280, height: 900 },
