@@ -3,7 +3,7 @@
 // callers resolve the data, these only format it.
 
 import type { ActionRecord, CookieRecord, RequestRecord, TraceEvent } from '../core/types.ts';
-import { plural, quote } from './text.ts';
+import { plural, quote, sanitize } from './text.ts';
 import {
   MASK,
   isSensitiveFieldName,
@@ -35,7 +35,8 @@ export function shortUrl(url: string, base?: string): string {
   } else {
     out = `${parsed.host}${tail}`;
   }
-  return out.endsWith('?') ? out.slice(0, -1) : out;
+  const trimmed = out.endsWith('?') ? out.slice(0, -1) : out;
+  return sanitize(trimmed);
 }
 
 /** Last path segment of a URL, used to identify a script in console/initiator output. */
@@ -151,7 +152,11 @@ function cookieLine(events: TraceEvent[]): string | undefined {
     changed.push(...d.changed);
     removed.push(...d.removed);
   }
-  const parts = [...added.map((n) => `+${n}`), ...changed.map((n) => `~${n}`), ...removed.map((n) => `-${n}`)];
+  const parts = [
+    ...added.map((n) => `+${sanitize(n)}`),
+    ...changed.map((n) => `~${sanitize(n)}`),
+    ...removed.map((n) => `-${sanitize(n)}`),
+  ];
   return parts.length > 0 ? tagLine('cook', parts.join(' ')) : undefined;
 }
 
@@ -160,7 +165,11 @@ function storageLines(events: TraceEvent[]): string[] {
   for (const event of events) {
     if (event.type !== 'storage_diff') continue;
     const d = event.data as { area: 'local' | 'session'; added: string[]; changed: string[]; removed: string[] };
-    const parts = [...d.added.map((k) => `+${k}`), ...d.changed.map((k) => `~${k}`), ...d.removed.map((k) => `-${k}`)];
+    const parts = [
+      ...d.added.map((k) => `+${sanitize(k)}`),
+      ...d.changed.map((k) => `~${sanitize(k)}`),
+      ...d.removed.map((k) => `-${sanitize(k)}`),
+    ];
     if (parts.length > 0) lines.push(tagLine('stor', `${d.area} ${parts.join(' ')}`));
   }
   return lines;
@@ -503,7 +512,7 @@ export function formatStorage(
   secrets: SecretRegistry,
 ): string {
   const text = entries
-    .map((e) => `${e.area} ${e.key}=${!reveal && isSensitiveFieldName(e.key) ? MASK : e.value}`)
+    .map((e) => `${e.area} ${sanitize(e.key)}=${!reveal && isSensitiveFieldName(e.key) ? MASK : quote(e.value)}`)
     .join('\n');
   return reveal ? text : secrets.mask(text);
 }
@@ -527,8 +536,11 @@ export function formatDetail(d: {
 }): string {
   const parts = [`[${d.ref}] ${d.role} ${quote(d.name)}`];
   if (d.tag) parts.push(`<${d.tag}>`);
-  if (d.href) parts.push(`href ${d.href}`);
-  if (d.formMethod || d.formAction) parts.push(`form ${[d.formMethod, d.formAction].filter(Boolean).join(' ')}`);
+  if (d.href) parts.push(`href ${sanitize(d.href)}`);
+  if (d.formMethod || d.formAction) {
+    const action = d.formAction !== undefined ? sanitize(d.formAction) : d.formAction;
+    parts.push(`form ${[d.formMethod, action].filter(Boolean).join(' ')}`);
+  }
   if (d.inputType) parts.push(`type ${d.inputType}`);
   if (d.css) parts.push(`css: ${d.css}`);
   if (d.testId) parts.push(`testid: ${d.testId}`);

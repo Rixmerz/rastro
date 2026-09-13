@@ -17,6 +17,8 @@ const SENSITIVE_TOKENS = new Set([
   'apikey',
   'passcode',
   'ssn',
+  'clave',
+  'codigo',
 ]);
 
 /**
@@ -36,7 +38,14 @@ const SENSITIVE_SUBSTRINGS = [
   'cardnumber',
   'authorization',
   'session',
+  'contrasena',
+  'senha',
 ];
+
+/** Strips combining diacritical marks so `contraseña`/`código` match their ASCII forms. */
+function stripDiacritics(value: string): string {
+  return value.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
 
 function tokenize(name: string): string[] {
   return name
@@ -58,11 +67,12 @@ function tokenize(name: string): string[] {
  * under-masking a real token.
  */
 export function isSensitiveFieldName(name: string): boolean {
-  const tokens = tokenize(name);
+  const plain = stripDiacritics(name);
+  const tokens = tokenize(plain);
   if (tokens.some((token) => SENSITIVE_TOKENS.has(token))) {
     return true;
   }
-  const haystacks = [name.toLowerCase(), tokens.join(''), tokens.join('_')];
+  const haystacks = [plain.toLowerCase(), tokens.join(''), tokens.join('_')];
   return SENSITIVE_SUBSTRINGS.some((needle) => haystacks.some((h) => h.includes(needle)));
 }
 
@@ -245,8 +255,11 @@ export class SecretRegistry {
     const byLengthDesc = [...this.#values].sort((a, b) => b.length - a.length);
     return byLengthDesc.reduce((acc, value) => {
       const encoded = encodeURIComponent(value);
-      const next = acc.replaceAll(value, MASK);
-      return encoded === value ? next : next.replaceAll(encoded, MASK);
+      const formEncoded = encoded.replaceAll('%20', '+');
+      let next = acc.replaceAll(value, MASK);
+      if (encoded !== value) next = next.replaceAll(encoded, MASK);
+      if (formEncoded !== value && formEncoded !== encoded) next = next.replaceAll(formEncoded, MASK);
+      return next;
     }, text);
   }
 }

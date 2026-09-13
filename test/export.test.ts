@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { toHar } from '../src/export/har.ts';
 import { toPerfetto } from '../src/export/perfetto.ts';
+import { MASK } from '../src/security/redact.ts';
 import type { ActionRecord, RequestRecord, TraceEvent } from '../src/core/types.ts';
 
 const STARTED_AT = '2026-01-01T00:00:00.000Z';
@@ -102,6 +103,56 @@ describe('toHar', () => {
     const headers = (entry['request'] as Record<string, unknown>)['headers'] as { name: string; value: string }[];
     const auth = headers.find((h) => h.name === 'Authorization');
     expect(auth?.value).toBe('***');
+  });
+
+  test('with no mask fn, defaults to masking Authorization/Cookie headers and a urlencoded password body', () => {
+    const har = toHar({
+      startedAt: STARTED_AT,
+      creatorVersion: '0.1.0',
+      requests: [
+        makeRequest({
+          requestHeaders: {
+            Authorization: 'Bearer secret',
+            Cookie: 'sid=abc123',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          postData: 'user=jp&password=hunter2',
+        }),
+      ],
+      actions: [],
+    });
+    const entry = (har.log['entries'] as Record<string, unknown>[])[0]!;
+    const headers = (entry['request'] as Record<string, unknown>)['headers'] as { name: string; value: string }[];
+    expect(headers.find((h) => h.name === 'Authorization')?.value).toBe(`Bearer ${MASK}`);
+    expect(headers.find((h) => h.name === 'Cookie')?.value).toBe(`sid=${MASK}`);
+    const postData = (entry['request'] as Record<string, unknown>)['postData'] as { text: string };
+    expect(postData.text).toBe(`user=jp&password=${MASK}`);
+    expect(postData.text).not.toContain('hunter2');
+  });
+
+  test('reveal: true disables the default masking', () => {
+    const har = toHar({
+      startedAt: STARTED_AT,
+      creatorVersion: '0.1.0',
+      requests: [
+        makeRequest({
+          requestHeaders: {
+            Authorization: 'Bearer secret',
+            Cookie: 'sid=abc123',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          postData: 'user=jp&password=hunter2',
+        }),
+      ],
+      actions: [],
+      reveal: true,
+    });
+    const entry = (har.log['entries'] as Record<string, unknown>[])[0]!;
+    const headers = (entry['request'] as Record<string, unknown>)['headers'] as { name: string; value: string }[];
+    expect(headers.find((h) => h.name === 'Authorization')?.value).toBe('Bearer secret');
+    expect(headers.find((h) => h.name === 'Cookie')?.value).toBe('sid=abc123');
+    const postData = (entry['request'] as Record<string, unknown>)['postData'] as { text: string };
+    expect(postData.text).toBe('user=jp&password=hunter2');
   });
 
   test('pages are created for navigation-kind actions and url-changing actions', () => {

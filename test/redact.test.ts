@@ -29,6 +29,16 @@ describe('isSensitiveFieldName', () => {
     expect(isSensitiveFieldName('opinion')).toBe(false);
   });
 
+  test('flags Spanish/Portuguese credential names, with or without diacritics', () => {
+    for (const name of ['clave', 'codigo', 'contrasena', 'contraseña', 'senha']) {
+      expect(isSensitiveFieldName(name)).toBe(true);
+    }
+  });
+
+  test('does not flag usuario (a username is not a secret)', () => {
+    expect(isSensitiveFieldName('usuario')).toBe(false);
+  });
+
   test('documented false positive: tokenizer_version is treated as sensitive', () => {
     // "token" is one of the substring patterns the spec calls out (it also
     // covers header names like x-api-key, which never split into an exact
@@ -146,6 +156,12 @@ describe('maskBody', () => {
     expect(maskBody(body, undefined, false)).toBe(`user=jp&pwd=${MASK}`);
   });
 
+  test('masks Spanish-named fields (clave, contraseña) in a JSON body', () => {
+    const body = JSON.stringify({ usuario: 'jp', clave: 'hunter2', contraseña: 'hunter3' });
+    const out = maskBody(body, 'application/json', false);
+    expect(JSON.parse(out)).toEqual({ usuario: 'jp', clave: MASK, contraseña: MASK });
+  });
+
   test('masks multipart parts by sensitive field name only', () => {
     const boundary = '----boundary123';
     const body = [
@@ -192,6 +208,19 @@ describe('SecretRegistry', () => {
     const registry = new SecretRegistry();
     registry.add('p@ss word');
     expect(registry.mask(`url has p%40ss%20word in it`)).toBe(`url has ${MASK} in it`);
+  });
+
+  test('also masks the form-urlencoded (%20 -> +) form of a value', () => {
+    const registry = new SecretRegistry();
+    registry.add('p@ss word');
+    expect(registry.mask('body has p%40ss+word in it')).toBe(`body has ${MASK} in it`);
+  });
+
+  test('masks a registered value even under an unlisted field name like usuario', () => {
+    const registry = new SecretRegistry();
+    registry.add('jsmith');
+    const body = 'usuario=jsmith&otro=1';
+    expect(registry.mask(body)).toBe(`usuario=${MASK}&otro=1`);
   });
 
   test('masks longest match first so overlapping secrets do not leave fragments', () => {

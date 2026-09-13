@@ -2,6 +2,7 @@
 // caller (the CLI/engine resolves bodies and masking before calling this).
 
 import type { ActionRecord, RequestRecord } from '../core/types.ts';
+import { maskBody, maskHeaders } from '../security/redact.ts';
 
 const ACTIONS_WITH_OWN_PAGE = new Set(['open', 'goto', 'back', 'forward', 'reload']);
 
@@ -13,6 +14,11 @@ export interface HarInput {
   actions: ActionRecord[];
   body?: (hash: string) => { text: string; encoding?: 'base64' } | undefined;
   mask?: (headers: Record<string, string>) => Record<string, string>;
+  /**
+   * When true, disables the default masking applied when `mask` is omitted.
+   * Ignored when `mask` is provided — that caller has already decided.
+   */
+  reveal?: boolean;
 }
 
 function isoAt(startedAt: string, tMs: number): string {
@@ -64,9 +70,21 @@ function totalTimeFor(req: RequestRecord): number {
   return end !== undefined ? end - req.timing.startMs : 0;
 }
 
+/**
+ * Header masking to apply for this export. `input.mask` wins when given
+ * (the caller decided, and it separately masks `.data` for the body); with
+ * no `mask` and no explicit `reveal: true`, HAR output masks by default —
+ * an unmasked HAR is a plaintext Authorization/Cookie dump.
+ */
+function resolveHeaderMask(input: HarInput): (headers: Record<string, string>) => Record<string, string> {
+  if (input.mask) return input.mask;
+  return (headers) => maskHeaders(headers, input.reveal === true);
+}
+
 function buildEntry(req: RequestRecord, input: HarInput): Record<string, unknown> {
-  const requestHeaders = input.mask ? input.mask(req.requestHeaders) : req.requestHeaders;
-  const responseHeaders = req.responseHeaders ? (input.mask ? input.mask(req.responseHeaders) : req.responseHeaders) : {};
+  const maskHeadersFn = resolveHeaderMask(input);
+  const requestHeaders = maskHeadersFn(req.requestHeaders);
+  const responseHeaders = req.responseHeaders ? maskHeadersFn(req.responseHeaders) : {};
 
   const request: Record<string, unknown> = {
     method: req.method,
@@ -79,10 +97,11 @@ function buildEntry(req: RequestRecord, input: HarInput): Record<string, unknown
     bodySize: req.postData !== undefined ? req.postData.length : 0,
   };
   if (req.postData !== undefined) {
-    request['postData'] = {
-      mimeType: headerValue(requestHeaders, 'content-type') ?? 'application/octet-stream',
-      text: req.postData,
-    };
+    const mimeType = headerValue(requestHeaders, 'content-type') ?? 'application/octet-stream';
+    // Only mask postData under the default masking path: an explicit `mask`
+    // means the caller already masks `.data` separately (see HarInput.mask).
+    const text = input.mask ? req.postData : maskBody(req.postData, mimeType, input.reveal === true);
+    request['postData'] = { mimeType, text };
   }
 
   const resolvedBody = req.bodyHash !== undefined ? input.body?.(req.bodyHash) : undefined;
