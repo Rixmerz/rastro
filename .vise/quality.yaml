@@ -12,7 +12,7 @@
 checks:
   lint: ["npx", "--no-install", "eslint", "."]
   sca: ["pnpm", "audit", "--audit-level", "high"]
-  types: ["npx", "--no-install", "tsc", "--noEmit"]
+  types: ["npx", "--no-install", "tsc", "-p", "tsconfig.check.json"]
   unit: ["npm", "test", "--silent"]
 
 # Not bound — the tool was not found. Each one is a real gap, not an

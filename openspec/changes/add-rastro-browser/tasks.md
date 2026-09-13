@@ -1,13 +1,13 @@
 ## 1. Foundation
 
-- [ ] 1.1 Write `src/core/types.ts` and `src/core/paths.ts` contracts
-- [ ] 1.2 Fixture site `test/fixtures/server.ts` (login, polling, tracking, dialogs, popup, captcha, large nav) with declared attribution ground truth
-- [ ] 1.3 `src/store/db.ts` TraceStore with schema, inserts, queries, 0600 permissions, unit tests
-- [ ] 1.4 `src/security/redact.ts` masking and `«»` quoting, unit tests
-- [ ] 1.5 `src/perception/view.ts` minimal view, regions, collapse, find, unit tests
-- [ ] 1.6 `src/attribution/attribute.ts` pure attribution, URL templates, analytics hosts, unit tests
-- [ ] 1.7 `src/export/har.ts` and `src/export/perfetto.ts`, unit tests
-- [ ] 1.8 `src/flow/format.ts`, `export-playwright.ts`, `import-chrome.ts`, unit tests
+- [x] 1.1 Write `src/core/types.ts` and `src/core/paths.ts` contracts
+- [x] 1.2 Fixture site `test/fixtures/server.ts` (login, polling, tracking, dialogs, popup, captcha, large nav) with declared attribution ground truth
+- [x] 1.3 `src/store/db.ts` TraceStore with schema, inserts, queries, 0600 permissions, unit tests
+- [x] 1.4 `src/security/redact.ts` masking and `«»` quoting, unit tests
+- [x] 1.5 `src/perception/view.ts` minimal view, regions, collapse, find, unit tests
+- [x] 1.6 `src/attribution/attribute.ts` pure attribution, URL templates, analytics hosts, unit tests
+- [x] 1.7 `src/export/har.ts` and `src/export/perfetto.ts`, unit tests
+- [x] 1.8 `src/flow/format.ts`, `export-playwright.ts`, `import-chrome.ts`, unit tests
 
 ## 2. Engine
 
