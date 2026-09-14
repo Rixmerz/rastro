@@ -274,7 +274,7 @@ function dispatchRecord(sub_: string, argv: string[]): Dispatch {
   if (sub_ === 'stop') {
     const { values } = sub(argv, { save: { type: 'string' } });
     const save = str(values.save);
-    return { method: 'recordStop', params: { save: save === undefined ? undefined : resolvePath(save) } };
+    return { method: 'recordStop', params: { save: save === undefined ? undefined : resolveFlowRef(save) } };
   }
   throw new UsageError(`unknown "record ${sub_}"\nusage: ${USAGE['record start']}\n       ${USAGE['record stop']}`);
 }
@@ -318,7 +318,7 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
     const out = str(values.out);
     return {
       method: 'flowExport',
-      params: { file: resolvePath(file), out: out === undefined ? undefined : resolvePath(out), format: 'playwright' },
+      params: { file: resolveFlowRef(file), out: out === undefined ? undefined : resolvePath(out), format: 'playwright' },
     };
   }
   if (sub_ === 'import') {

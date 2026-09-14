@@ -1,4 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import { secretRemove, secretSet } from '../src/security/vault.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
@@ -77,7 +80,10 @@ describe('human capture', () => {
     'records fill/select/check/click as human actions without leaking the password',
     async () => {
       const engine = await EngineCore.create(nextSession('capture'));
-      const savePath = join(home, 'captured.yaml');
+      // Under a directory that does not exist yet: the flow home is created on
+      // first save, and `rastro flow save <name>` on a fresh machine would
+      // otherwise fail with ENOENT.
+      const savePath = join(home, 'fresh-flow-home', 'captured.yaml');
       try {
         await engine.recordStart({ url: `${server.origin}/record` });
         const page = engine.session!.activePage();
@@ -576,6 +582,49 @@ describe('flow export/import', () => {
       await engine.shutdown();
     }
   });
+});
+
+const hasKeyring = spawnSync('sh', ['-c', 'command -v secret-tool'], { stdio: 'ignore' }).status === 0;
+
+describe.runIf(hasKeyring)('a vault value never reaches the trace', () => {
+  const ENTRY = 'rastro.flowtest.pw';
+  afterAll(() => {
+    secretRemove(ENTRY);
+  });
+
+  test(
+    'an undeclared --param resolved from the keyring is still stored masked',
+    async () => {
+      secretSet(ENTRY, 'vault-only-value');
+      const session = nextSession('vault-mask');
+      const engine = await createEngine(session);
+      try {
+        // The flow declares no `password`: this is the shape where the value
+        // used to be written to the trace in the clear, because there was no
+        // param definition to carry the secret flag.
+        const flow = loginFlow('vault-mask', 'POST /login 2xx');
+        delete flow.params;
+        const file = writeFlow('vault-mask', flow);
+
+        await engine.flowRun({ file, params: { password: `secret:${ENTRY}` } });
+
+        // Read the raw trace, not the formatted output: the registry masks
+        // what is printed, so `history` stays clean either way. What this test
+        // is about is whether the value was ever written down.
+        const db = new DatabaseSync(join(home, 'sessions', session, 'trace.db'), { readOnly: true });
+        try {
+          const rows = db.prepare('SELECT data FROM actions').all() as { data: string }[];
+          expect(rows.length).toBeGreaterThan(0);
+          expect(rows.map((r) => r.data).join('\n')).not.toContain('vault-only-value');
+        } finally {
+          db.close();
+        }
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
 });
 
 describe('secret references in flow params', () => {

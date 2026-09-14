@@ -6,6 +6,8 @@
 // `ref`.
 
 import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { ensurePrivateDir } from '../core/paths.ts';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import type { Page } from 'playwright-core';
@@ -193,6 +195,7 @@ export class FlowController {
 
     let savedPath: string | undefined;
     if (params.save) {
+      ensurePrivateDir(dirname(params.save));
       writeFileSync(params.save, stringifyFlow(flow), { mode: 0o600 });
       savedPath = params.save;
     }
@@ -340,6 +343,7 @@ export class FlowController {
     const actions = this.core.store.actions({ from: params.from, to: params.to });
     const name = params.name ?? basename(params.file).replace(/\.ya?ml$/i, '');
     const flow = actionsToFlow(name, actions, attributedByAction(this.core, actions));
+    ensurePrivateDir(dirname(params.file));
     writeFileSync(params.file, stringifyFlow(flow), { mode: 0o600 });
     return { text: `saved ${flow.steps.length} steps to ${params.file}`, data: { file: params.file, steps: flow.steps.length } };
   }
@@ -359,6 +363,7 @@ export class FlowController {
     const flow = parseFlow(readFileSync(params.file, 'utf8'));
     const code = flowToPlaywright(flow);
     const out = params.out ?? `${params.file.replace(/\.ya?ml$/i, '')}.spec.ts`;
+    ensurePrivateDir(dirname(out));
     writeFileSync(out, code, { mode: 0o600 });
     return { text: out, data: { file: out }, files: [out] };
   }
@@ -367,6 +372,7 @@ export class FlowController {
     const params = parse(FlowImportSchema, rawParams);
     const json: unknown = JSON.parse(readFileSync(params.file, 'utf8'));
     const flow = importChromeRecording(json);
+    ensurePrivateDir(dirname(params.out));
     writeFileSync(params.out, stringifyFlow(flow), { mode: 0o600 });
     return { text: params.out, data: { file: params.out }, files: [params.out] };
   }

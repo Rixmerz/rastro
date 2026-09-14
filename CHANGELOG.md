@@ -33,6 +33,11 @@ Los tres salieron de usar Rastro contra un sitio real, no de la suite.
 
 ### Conocido, sin corregir
 
+- El test `human capture: overlapping fast gestures (R4)` es **intermitente**:
+  falla en aproximadamente 1 de cada 3 corridas, y siempre al correrlo aislado
+  con `-t`. Falla igual en el commit anterior a este cambio, así que es previo.
+  Depende de que el POST se atribuya al click dentro de la ventana silenciosa.
+
 - Contra el servidor de pruebas en loopback, las peticiones lanzadas por
   `fetch()` nunca emiten `Network.loadingFinished`, así que su cuerpo no se
   guarda y ningún test puede cubrir esa ruta. **Contra sitios reales sí

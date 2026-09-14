@@ -49,8 +49,13 @@ export function promptInTerminal(argv: string[]): never {
     throw new RastroError('no terminal to ask in, and this process has no tty', `run it yourself: rastro ${argv.join(' ')}`);
   }
   const self = process.argv[1] ?? 'rastro';
-  const args = term === 'gnome-terminal' ? ['--wait', '--'] : ['-e'];
-  const res = spawnSync(term, [...args, process.execPath, self, ...argv], { stdio: 'inherit' });
+  const open = term === 'gnome-terminal' ? ['--wait', '--'] : ['-e'];
+  // Held open on purpose: the command prints one line and exits, so otherwise
+  // the window appears and vanishes and nobody sees whether it worked. The
+  // command is passed as "$@" rather than interpolated, so no argument is
+  // re-parsed by the shell.
+  const hold = ['sh', '-c', '"$@"; printf "\\n[enter] "; read _', 'sh'];
+  const res = spawnSync(term, [...open, ...hold, process.execPath, self, ...argv], { stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 

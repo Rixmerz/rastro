@@ -114,12 +114,13 @@ function buildParamValues(
   const values: Record<string, string> = {};
   const fromKeyring = (name: string, ref: string): string => {
     const value = fromVault(name, ref);
-    // Anything that came out of the keyring is a secret whether or not the
-    // flow said so, so mark the param: `resolveValue` reads that flag to
-    // decide how the action is recorded, and the registry masks the value in
-    // every other output.
-    const def = flow.params?.[name];
-    if (def) def.secret = true;
+    // Anything out of the keyring is a secret whether or not the flow said so.
+    // The declaration has to be created when it is missing, not just updated:
+    // `--param pw=secret:x` against a flow that never declared `pw` would
+    // otherwise be recorded with secret=false, and the ActionRecord keeps the
+    // raw value — the registry masks output, not storage.
+    flow.params ??= {};
+    (flow.params[name] ??= {}).secret = true;
     secrets.add(value);
     return value;
   };

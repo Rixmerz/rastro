@@ -132,6 +132,10 @@ params:
 También sirve `--param password=secret:example.password`. Si la entrada no
 existe, la ejecución aborta antes del primer paso y dice cuál falta.
 
+El export a Playwright **no** arrastra la referencia: emite
+`process.env.PASSWORD`, porque un test de Playwright no debe depender del
+keyring de una máquina.
+
 **Modelo de amenaza:** con el keyring desbloqueado, cualquier proceso de tu
 sesión puede leer estos valores, igual que las contraseñas guardadas de tu
 navegador. Aparte, el archivo `secrets` de cada sesión guarda en claro (0600)
