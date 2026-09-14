@@ -4,3 +4,4 @@ dist/
 *.har
 *.trace.json
 .vise/
+.claude/workflow/
