@@ -647,3 +647,38 @@ describe('secret references in flow params', () => {
     30000,
   );
 });
+
+describe('record start on an already-open session', () => {
+  test(
+    'asks for a headed browser, because a human cannot drive what they cannot see',
+    async () => {
+      const engine = await createEngine(nextSession('record-headed'));
+      try {
+        await engine.open({ url: `${server.origin}/record`, allowWrite: ['127.0.0.1'] });
+
+        // The suite forces RASTRO_RECORD_HEADLESS=1 so no window ever opens, so
+        // assert the request instead of the window: record it, then run the
+        // real open headless anyway.
+        const asked: Record<string, unknown>[] = [];
+        const realOpen = engine.open.bind(engine);
+        (engine as unknown as { open: (p: Record<string, unknown>) => Promise<unknown> }).open = async (p) => {
+          asked.push(p);
+          return realOpen({ ...p, headed: false });
+        };
+        delete process.env.RASTRO_RECORD_HEADLESS;
+
+        await engine.recordStart({ url: `${server.origin}/record` });
+        await engine.recordStop({});
+
+        // recordStart used to ask for headed only when there was no session at
+        // all, so an already-open session stayed headless while the CLI
+        // cheerfully reported "recording started".
+        expect(asked.some((p) => p.headed === true)).toBe(true);
+      } finally {
+        process.env.RASTRO_RECORD_HEADLESS = '1';
+        await engine.shutdown();
+      }
+    },
+    60000,
+  );
+});

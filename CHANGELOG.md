@@ -61,6 +61,16 @@ All three came out of using Rastro against a real site, not out of the suite.
 - A download left Playwright's own artifact on disk at **0644** — a second,
   world-readable copy of the file, next to the 0600 one.
 
+### Fixed — human recording never opened a window
+
+- `record start` on a session that was **already open** kept the browser
+  headless while reporting `recording started`. The human it exists for saw
+  nothing. Two causes, both needed: `recordStart` only asked for a headed
+  browser when there was no session at all, and `Session.relaunch()` rebuilt
+  the context from the value it was constructed with, so even when the engine
+  did flip `headed` the new value never arrived. `relaunch(headed)` now takes
+  it, and recording switches an open session over.
+
 ### Tested, where it had been assumed
 
 Closing the gaps a full sweep exposed. No production code changed here — these

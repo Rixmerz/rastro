@@ -145,6 +145,12 @@ export class FlowController {
       // else from the continued flow's own first navigation.
       const host = params.url ? hostOf(params.url) : firstNavigationHost(this.continuedSteps);
       await this.core.open({ headed, allowWrite: host ? [host] : [] });
+    } else if (headed) {
+      // A session opened earlier is headless, and a human cannot drive what
+      // they cannot see. Switching costs a relaunch (headed is a property of
+      // the browser process), so ask for it explicitly and pass nothing else:
+      // the existing allowlist and dialog policy must survive.
+      await this.core.open({ headed });
     }
 
     this.recordedIds = [];

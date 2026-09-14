@@ -124,7 +124,7 @@ export class Session {
   private readonly writeGuardReady = new Map<Page, Promise<void>>();
   private readonly hooks: SessionHooks;
   private readonly paths: SessionPaths;
-  private readonly headed: boolean;
+  private headed: boolean;
   private nextTabSeq = 0;
   private closedByUs = false;
   private recoveredFromCrash = false;
@@ -191,7 +191,13 @@ export class Session {
    * reinstalls the write guard, and re-registers tabs. The engine re-attaches
    * the recorder to the new active page afterwards by reading `activePage()`.
    */
-  async relaunch(): Promise<void> {
+  async relaunch(headed?: boolean): Promise<void> {
+    // Headed is a property of the browser process, so it can only change by
+    // relaunching — which means the new value has to arrive here. It used to
+    // be set on the engine and never handed over, so `record start` on an
+    // already-open headless session relaunched headless and the human watching
+    // saw nothing while the CLI said "recording started".
+    if (headed !== undefined) this.headed = headed;
     // The old context may still be alive (e.g. a caller proactively
     // relaunching after a single tab crash without a context close): close it
     // ourselves so its 'close' handler doesn't fire a second, stale crash.

@@ -449,13 +449,13 @@ export class EngineCore implements Engine {
       if (params.allowUpload !== undefined) applyOpts.allowUpload = params.allowUpload;
       if (params.dialogs !== undefined) applyOpts.dialogs = params.dialogs;
       this.session.applyOptions(applyOpts);
-      // ponytail: `applyOptions` has no `headed` knob (that decides the
-      // browser process itself, not per-request behaviour); best effort is
-      // relaunching and relying on the session to keep it, since there is no
-      // signature to hand the new value through.
+      // Headed is not a per-request option: it decides the browser process, so
+      // switching it means relaunching, and the new value has to travel with
+      // the call. Relying on the session to "keep" it left `record start`
+      // relaunching headless on an already-open session.
       if (params.headed !== undefined && params.headed !== this.sessionHeaded) {
         this.sessionHeaded = params.headed;
-        await this.session.relaunch();
+        await this.session.relaunch(params.headed);
       }
     }
 
