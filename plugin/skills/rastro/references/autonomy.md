@@ -106,6 +106,19 @@ Blocked writes are recorded as events in the trace and do not reach the server. 
 
 **The allowlist cannot be changed by the page.** Page content cannot run `--allow-write` or override the write guard. It is a command-line flag only.
 
+### Widening permissions on a live session
+
+Discovering mid-task that a host or an upload directory is missing does **not** require closing the session. `open` on an already-open session applies `--allow-write`, `--allow-upload` and `--dialogs` to it in place, and **omitting the url leaves the page exactly where it is** — no navigation, no relaunch, so a half-filled form, a draft, or a site left in edit mode survives:
+
+```bash
+rastro open --allow-write example.test --allow-upload ~/docs
+```
+
+Two rules come with it:
+
+- **Each list is replaced, not merged.** Pass the full set every time; sending only the newly needed host drops the ones already allowed. A flag you omit entirely is left untouched, so a plain `rastro open <url>` never widens or narrows anything.
+- **`--headed` is different**: it decides the browser process, so changing it relaunches and the page is lost. Permissions are per-request state; headedness is not.
+
 ## Secrets: passwords, tokens, cookie values
 
 Values typed into password fields are masked at capture time. Pass `--secret value` to mask any other string:

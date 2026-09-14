@@ -628,6 +628,35 @@ describe('reopen applies params live', () => {
     },
     30000,
   );
+
+  test(
+    'open --allow-upload on an already-open session widens the sandbox without relaunching',
+    async () => {
+      // The write case above was covered; upload was not, and it is the one
+      // that matters to a long-lived session: reopening to gain a directory
+      // would drop whatever state the page was holding.
+      const engine = await createEngine(nextSession('reopen-allow-upload'));
+      const outside = mkdtempSync(join(tmpdir(), 'rastro-reopen-upload-'));
+      const file = join(outside, 'late.txt');
+      writeFileSync(file, 'hi');
+      try {
+        await engine.open({ url: `${server.origin}/upload` });
+        const ref = await refByName(engine, 'Adjunto');
+        await expect(engine.act({ ref, kind: 'upload', value: file })).rejects.toThrow(
+          /upload outside allowed dirs/,
+        );
+
+        // No url: the point is to widen permissions and keep the page as it is.
+        await engine.open({ allowUpload: [outside] });
+        const ok = await engine.act({ ref, kind: 'upload', value: file });
+        expect(ok.text).toMatch(/^#\d+/);
+      } finally {
+        await engine.shutdown();
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
 });
 
 describe('GPU', () => {

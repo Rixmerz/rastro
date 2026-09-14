@@ -5,6 +5,27 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — the docs said nothing, so sessions got thrown away
+
+- **`open` on a live session applies `--allow-write`, `--allow-upload` and
+  `--dialogs` in place, and with no url it does not navigate.** The engine has
+  done this since R10, but no document mentioned it, so a session that turned
+  out to need one more host got closed and reopened — losing whatever the page
+  was holding, which on a Moodle course is edit mode and on a mail client is a
+  draft. README, `README.es.md` and the skill's `autonomy.md` now say so, with
+  the trap that comes with it: each list is **replaced, not merged**.
+- A test covers the upload half. R10 only ever proved `--allow-write`, and
+  upload is the one worth proving, since the alternative to widening it live is
+  throwing the session away.
+- `upload` was missing from the flow step-kind table in `flows.md`, having been
+  added to the engine without reaching the docs.
+- `flows.md` gains the gotchas that cost silent failures in real use: `css`
+  takes Playwright's full syntax (`>>`, `nth=`); a hidden `input[type=file]`
+  still uploads, and un-hiding one leaves it swallowing clicks; an editor that
+  exposes a contenteditable as `role=button` makes `fill` refuse it; a fixed
+  navbar intercepts clicks; and `check`/`uncheck` are idempotent, so an
+  `expect.requests` on them fails runs that actually succeeded.
+
 ### Added — a recorded upload is replayable
 
 - **`upload` is a flow step.** It was not one at all, so recording a teacher

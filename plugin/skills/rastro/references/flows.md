@@ -88,6 +88,7 @@ The step kind is the step's own key (`open:`, `click:`, `fill:`, ...), not a sep
 | `fill: target`, `value:` | target + sibling `value` | Type text into an input (replaces content) |
 | `type: target`, `value:` | target + sibling `value` | Type text (appends to content) |
 | `select: target`, `value:` | target + sibling `value` | Select an option in a dropdown |
+| `upload: target`, `value:` | target + sibling `value` (a local path) | Attach a file to a file input |
 | `check: target` | value is a target | Check a checkbox |
 | `uncheck: target` | value is a target | Uncheck a checkbox |
 | `hover: target` | value is a target | Hover over an element |
@@ -115,6 +116,25 @@ target:
 ```
 
 Rastro tries role+name first, then visible text, then other fields, finally CSS. The recorded locator bundle includes all matches found.
+
+`css` is handed to Playwright untouched, so its full selector syntax is available where the accessible name is not enough — including `>>` chaining and `nth=`:
+
+```yaml
+target:
+  css: 'input[type="file"]:not([accept]) >> nth=0'
+```
+
+Three things the accessibility tree will not tell you, each of which has cost a silent failure:
+
+- **A hidden `input[type=file]` is still uploadable.** Files are attached through the input itself, not by clicking, so it does not need to be visible. If you ever unhide one to inspect it, hide it again before the next click: a `position: fixed` input parks over the page and swallows clicks on whatever it covers, and the click just retries without saying why.
+- **Some editors expose a contenteditable as `role=button`.** `fill` then refuses it as not editable and clicking it opens whatever widget the app attaches. Look for a URL that pre-fills the field instead of fighting the control.
+- **A fixed header or navbar intercepts clicks** on anything scrolled under it (Playwright says `intercepts pointer events`). Navigate with `goto` by URL rather than clicking the link.
+
+### Steps that do nothing when the page is already in the target state
+
+`check` and `uncheck` are idempotent: on a checkbox that already holds the wanted value they return immediately, without a click and **without any request**. An `expect.requests` on such a step therefore fails a run that actually succeeded — the flow did the right thing and then waited for a request that was never going to arrive.
+
+Leave `expect` off these steps and assert on the step that follows instead. This is Playwright's own `check`/`uncheck` contract, not a Rastro quirk, so it bites any flow that toggles a mode the site remembers between runs.
 
 ### Expectations
 

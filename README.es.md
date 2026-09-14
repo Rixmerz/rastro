@@ -94,6 +94,8 @@ rastro request r31 --curl
 rastro open https://api.example.test --allow-write example.test,api.example.test
 ```
 
+Los permisos no quedan fijos en el primer `open`. Volver a ejecutarlo sobre una sesión viva aplica `--allow-write`, `--allow-upload` y `--dialogs` en caliente, y sin url no navega, así que un formulario a medio llenar o un sitio en modo edición sobreviven. Cada lista se **reemplaza, no se suma**: hay que mandar el conjunto completo. `--headed` es la excepción: decide el proceso del navegador, así que cambiarlo relanza.
+
 **Mascarado de secretos:** Contraseñas, tokens, cookies y headers sensibles aparecen como `[MASKED]` a menos que uses `--reveal`.
 
 ```bash

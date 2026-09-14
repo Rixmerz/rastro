@@ -104,6 +104,13 @@ are aborted before they leave the browser.
 rastro open https://api.example.test --allow-write example.test,api.example.test
 ```
 
+Permissions are not frozen at the first `open`. Running it again on a live
+session applies `--allow-write`, `--allow-upload` and `--dialogs` in place, and
+with no url it does not navigate, so a half-filled form or a site left in edit
+mode survives the widening. Each list is **replaced, not merged** — pass the
+full set. `--headed` is the exception: it decides the browser process, so
+changing it relaunches.
+
 **Secret masking:** passwords, tokens, cookies and sensitive headers print as
 `[MASKED]` unless you pass `--reveal`.
 
