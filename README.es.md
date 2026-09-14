@@ -245,5 +245,5 @@ pnpm lint               # Eslint
 
 Apache License 2.0. Ver [LICENSE](LICENSE).
 
-Historial de versiones en [CHANGELOG.md](CHANGELOG.md).
+Historial de versiones en [CHANGELOG.md](CHANGELOG.md) (en inglés).
 Especificaciones normativas en [openspec/specs/](openspec/specs/).

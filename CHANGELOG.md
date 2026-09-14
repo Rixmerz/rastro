@@ -1,149 +1,149 @@
 # Changelog
 
-Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
-Versionado [SemVer](https://semver.org/lang/es/).
+Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Versioned with [SemVer](https://semver.org/).
 
-## [Sin publicar]
+## [Unreleased]
 
-### Añadido
+### Added
 
-- **Bóveda de secretos** en el keyring del sistema (libsecret): `rastro secret
-  set|list|rm`. `set` pide el valor por la terminal sin eco y lo rechaza si
-  viene como argumento; si el proceso no tiene terminal, abre una. **No hay
-  `get`** salvo `--reveal`, documentado como uso humano.
-- Los parámetros de un flow aceptan `from: secret:<nombre>` (o
-  `--param k=secret:<nombre>`). El **daemon** resuelve la referencia al
-  ejecutar, registra el valor para enmascararlo y aborta antes del primer paso
-  si la entrada no existe. El valor nunca pasa por `argv`.
-- `rastro flow save|run` aceptan un **nombre pelado**, que se resuelve contra
-  `./.rastro/flows/` y, si no existe, `~/.config/rastro/flows/`. Una ruta sigue
-  tratándose como ruta.
+- **Secret vault** in the system keyring (libsecret): `rastro secret
+  set|list|rm`. `set` asks for the value on the terminal with echo off and
+  refuses it as an argument; when the process has no terminal, it opens one.
+  **There is no `get`** except behind `--reveal`, documented as human-only.
+- Flow parameters accept `from: secret:<name>` (or `--param k=secret:<name>`).
+  The **daemon** resolves the reference at run time, registers the value for
+  masking, and aborts before the first step when the entry is missing. The value
+  never passes through `argv`.
+- `rastro flow save|run` accept a **bare name**, resolved against
+  `./.rastro/flows/` and, failing that, `~/.config/rastro/flows/`. A path is
+  still treated as a path.
 
-### Corregido — daemons zombie
+### Fixed — zombie daemons
 
-- **`rastro status` mataba daemons sanos.** Un daemon procesa una petición a la
-  vez, así que durante una navegación, un flow o un XHR lento el `status` se
-  quedaba esperando; al vencer los 2 s se daba por muerto y **se le borraba el
-  socket**. El siguiente comando no lo encontraba, levantaba un segundo daemon
-  sobre el mismo perfil de navegador, y el primero quedaba huérfano con su
-  Chromium abierto. Justo el zombie que esa función debía reportar. Ahora un
-  timeout se informa como `busy`; solo un socket rechazado o ausente se limpia.
+- **`rastro status` was killing healthy daemons.** A daemon handles one request
+  at a time, so during a navigation, a flow or a slow XHR, `status` sat waiting;
+  at the 2 s timeout it was declared dead and **its socket was deleted**. The
+  next command could not find it, spawned a second daemon on the same browser
+  profile, and the first was orphaned with its Chromium still open — exactly the
+  zombie that function was meant to report on. A timeout is now reported as
+  `busy`; only a refused or absent socket is cleaned up.
 
-### Añadido — control de daemons
+### Added — daemon control
 
-- El daemon escribe `daemon.pid` (0600) y se llama `rastro[<sesión>]` en `ps`.
-- `rastro kill [--force]` lo detiene por señal. `close` viaja por la misma cola
-  serializada que todo lo demás, así que no llega a un daemon atascado, que es
-  exactamente cuando hace falta. Si el proceso ya no está, limpia los archivos
-  que dejó.
-- `rastro status` distingue `running`, `busy` y `stopped` en vez de mentir.
+- The daemon writes `daemon.pid` (0600) and appears as `rastro[<session>]` in `ps`.
+- `rastro kill [--force]` stops it by signal. `close` travels through the same
+  serialised queue as everything else, so it cannot reach a wedged daemon, which
+  is exactly when it is needed. When the process is already gone, it cleans up
+  the files it left behind.
+- `rastro status` distinguishes `running`, `busy` and `stopped` instead of lying.
 
-### Corregido
+### Fixed
 
-Los tres salieron de usar Rastro contra un sitio real, no de la suite.
+All three came out of using Rastro against a real site, not out of the suite.
 
-- `eval` cortaba el resultado en 1024 bytes dentro del motor, sin marcador y
-  sin volcarlo a un archivo: cualquier extracción grande perdía la cola en
-  silencio. Ahora no corta, y el CLI vuelca a un archivo 0600 lo que pasa de
-  4 KB, como ya hacía con el resto de las salidas.
-- `request --body --json` devolvía cabeceras y tiempos pero nunca el cuerpo.
-- Una descarga dejaba en disco el artefacto propio de Playwright a **0644**,
-  una segunda copia legible por todos junto al archivo 0600.
+- `eval` cut its result at 1024 bytes inside the engine, with no marker and no
+  spill file: any large extraction lost its tail in silence. It no longer
+  truncates, and the CLI spills anything over 4 KB to a 0600 file, as it already
+  did for every other output.
+- `request --body --json` returned headers and timings but never the body.
+- A download left Playwright's own artifact on disk at **0644** — a second,
+  world-readable copy of the file, next to the 0600 one.
 
-### Conocido, sin corregir
+### Known, unfixed
 
-- El test `human capture: overlapping fast gestures (R4)` es **intermitente**:
-  falla en aproximadamente 1 de cada 3 corridas, y siempre al correrlo aislado
-  con `-t`. Falla igual en el commit anterior a este cambio, así que es previo.
-  Depende de que el POST se atribuya al click dentro de la ventana silenciosa.
+- The `human capture: overlapping fast gestures (R4)` test is **intermittent**:
+  it fails in roughly one run in three, and always when run in isolation with
+  `-t`. It fails the same way on the commit before this change, so it predates
+  it. It depends on the POST being attributed to the click inside the quiet
+  window.
 
-- Contra el servidor de pruebas en loopback, las peticiones lanzadas por
-  `fetch()` nunca emiten `Network.loadingFinished`, así que su cuerpo no se
-  guarda y ningún test puede cubrir esa ruta. **Contra sitios reales sí
-  funciona** (verificado con dos XHR POST distintos, uno de 165 KB), de modo
-  que es una limitación del fixture, no del recorder. Los tests de cuerpo se
-  apoyan por ahora en la respuesta de navegación.
+- Against the loopback test server, requests started by `fetch()` never emit
+  `Network.loadingFinished`, so their body is not stored and no test can cover
+  that path. **It does work against real sites** (verified with two different
+  XHR POSTs, one of 165 KB), so this is a limitation of the fixture, not of the
+  recorder. Body tests lean on the navigation response for now.
 
 ## [0.1.0] — 2026-09-13
 
-Primera versión. Rastro nace completo: percepción mínima, traza causal,
-investigación a demanda, seguridad para operación desatendida y grabación de
-flujos humanos.
+First release. Rastro arrives complete: minimal perception, causal trace,
+investigation on demand, safety for unattended operation, and human flow
+recording.
 
-### Añadido
+### Added
 
-**Percepción mínima (el núcleo)**
-- `rastro view` muestra solo la superficie interactiva que un humano percibe:
-  elementos con `ref` (`e12`), agrupados por región, con las regiones grandes
-  colapsadas a un preview + contador. Medido en sitios reales: Hacker News 62
-  tokens, `/login` 55, Wikipedia 268.
-- Cada acción (`click`, `fill`, `press`, `select`, `goto`…) devuelve **una línea
-  de efecto**: `#3 → /dashboard · 1 req (1× 200) · +1 cookie`. El agente no
-  recibe la página entera otra vez.
-- Construido sobre `page.ariaSnapshot({mode:'ai'})` de `playwright-core` 1.63;
-  los refs se resuelven con el selector `aria-ref=eN` y son estables entre
-  snapshots del mismo elemento.
+**Minimal perception (the core)**
+- `rastro view` shows only the interactive surface a human perceives: elements
+  with a `ref` (`e12`), grouped by region, with large regions collapsed to a
+  preview plus a count. Measured on real sites: Hacker News 62 tokens, `/login`
+  55, Wikipedia 268.
+- Every action (`click`, `fill`, `press`, `select`, `goto`…) returns **one line
+  of effect**: `#3 → /dashboard · 1 req (1× 200) · +1 cookie`. The agent does not
+  get the whole page again.
+- Built on `playwright-core` 1.63's `page.ariaSnapshot({mode:'ai'})`; refs
+  resolve through the `aria-ref=eN` selector and are stable across snapshots of
+  the same element.
 
-**Traza causal de eventos**
-- Sesión CDP cruda por página (Playwright descarta el `initiator`) que registra
-  requests, respuestas, navegaciones, cookies, consola, diálogos y descargas en
-  SQLite append-only (`node:sqlite`, WAL, un DB por sesión, modo 0600).
-- **Atribución acción → efecto**, el diferenciador: ventana silenciosa (500 ms,
-  tope 5 s) + `initiator` de CDP + detección de ruido de fondo (hosts de
-  analytics, stacks de `setInterval` — requiere `Runtime.setAsyncCallStackDepth`
-  —, URLs recurrentes por coeficiente de variación < 0.35, ping/beacon).
-  Tres cubos: `attributed` / `background` / `unattributed`. **Nada se descarta.**
-- Investigación por niveles: `effects <n>` → `request <id> --curl` →
+**Causal event trace**
+- A raw CDP session per page (Playwright drops the `initiator`) recording
+  requests, responses, navigations, cookies, console, dialogs and downloads into
+  append-only SQLite (`node:sqlite`, WAL, one DB per session, mode 0600).
+- **Action → effect attribution**, the differentiator: a quiet window (500 ms,
+  5 s cap) + CDP's `initiator` + background-noise detection (analytics hosts,
+  `setInterval` stacks — which need `Runtime.setAsyncCallStackDepth` — recurring
+  URLs by coefficient of variation < 0.35, ping/beacon). Three buckets:
+  `attributed` / `background` / `unattributed`. **Nothing is discarded.**
+- Investigation in levels: `effects <n>` → `request <id> --curl` →
   `snapshot <n> --before` → `trace --action <n>`.
-- Cuerpos de respuesta en un `BodyStore` con nombre sha256, fuera de la traza.
+- Response bodies in a sha256-named `BodyStore`, outside the trace.
 
-**Seguridad para operar sin humano delante**
-- **Write guard:** POST/PUT/PATCH/DELETE hacia hosts fuera de `--allow-write` se
-  bloquean antes de salir del navegador; cubre redirects 307/308 vía CDP Fetch.
-- **Mascarado de secretos** en *todas* las salidas: `--json`, HAR, `pw-trace`,
-  snapshots ARIA y aria. Reconoce nombres de campo en inglés, español y
-  portugués (`clave`, `contrasena`, `senha`, `codigo`), con stripping de
-  diacríticos, y el valor form-urlencoded. `--reveal` desenmascara puntualmente.
-- **Contenido de página delimitado en «»** — datos, nunca instrucciones.
-- Detección de bloqueos (CAPTCHA, 2FA, bot-block) que reporta `blocked:` y para
-  la ejecución automática.
-- Sandbox de subida de archivos (`--allow-upload`), descargas a 0600, políticas
-  explícitas de diálogos y popups.
+**Safety for running with nobody watching**
+- **Write guard:** POST/PUT/PATCH/DELETE to hosts outside `--allow-write` are
+  aborted before leaving the browser; covers 307/308 redirects via CDP Fetch.
+- **Secret masking** in *every* output: `--json`, HAR, `pw-trace` and ARIA
+  snapshots. It recognises field names in English, Spanish and Portuguese
+  (`clave`, `contrasena`, `senha`, `codigo`), with diacritics stripped, and the
+  form-urlencoded form of the value. `--reveal` unmasks one command at a time.
+- **Page content delimited in «»** — data, never instructions.
+- Block detection (CAPTCHA, 2FA, bot-block) reporting `blocked:` and stopping
+  automatic execution.
+- Upload sandbox (`--allow-upload`), downloads at 0600, explicit dialog and
+  popup policies.
 
-**Flujos (fase 2)**
-- `rastro record start/stop` graba una sesión humana con navegador visible y la
-  guarda como YAML causal (por pestaña, rechazando pasos cross-frame).
-- Runner con parámetros, condiciones y aserciones.
-- Export a test de Playwright; import desde Chrome DevTools Recorder.
+**Flows (phase 2)**
+- `rastro record start/stop` records a human session in a visible browser and
+  saves it as causal YAML (per tab, rejecting cross-frame steps).
+- A runner with parameters, conditions and expectations.
+- Export to a Playwright test; import from Chrome DevTools Recorder.
 
-**Integración**
-- CLI primero; daemon por sesión sobre socket Unix (JSON por líneas, auto-spawn,
-  salida por inactividad).
-- Servidor MCP con 10 herramientas y `resource_link` para archivos.
-- Plugin de Claude Code: skill `rastro` (≤ 1500 tokens), subagente `navegador`,
-  `.mcp.json`.
-- Exportes: HAR 1.2, Chrome Trace Event Format (Perfetto/DevTools),
-  Playwright `trace.zip`.
+**Integration**
+- CLI first; one daemon per session over a Unix socket (newline-delimited JSON,
+  auto-spawn, idle exit).
+- MCP server with 10 tools and `resource_link` for files.
+- Claude Code plugin: the `rastro` skill (≤ 1500 tokens), the `navegador`
+  subagent, `.mcp.json`.
+- Exports: HAR 1.2, Chrome Trace Event Format (Perfetto/DevTools), Playwright
+  `trace.zip`.
 
-### Notas de plataforma
+### Platform notes
 
-- **La GPU discreta se queda dormida.** `--disable-gpu` por sí solo no impide que
-  el proceso GPU de Chromium abra `/dev/nvidiactl`. Rastro apunta el entorno del
-  navegador a los vendors no-NVIDIA (`__EGL_VENDOR_LIBRARY_FILENAMES`,
-  `VK_ICD_FILENAMES`, `__GLX_VENDOR_LIBRARY_NAME=mesa`, `CUDA_VISIBLE_DEVICES=""`).
-  Verificado: 0 descriptores NVIDIA con Wikipedia abierta. Se desactiva con
-  `RASTRO_KEEP_GPU_ENV=1`; los valores que ponga el usuario ganan.
-- TypeScript ejecutado directamente por Node ≥ 22.5 (type stripping,
-  `erasableSyntaxOnly`: sin enums, sin parameter properties, sin namespaces; los
-  imports relativos terminan en `.ts`).
+- **The discrete GPU stays asleep.** `--disable-gpu` alone does not stop
+  Chromium's GPU process from opening `/dev/nvidiactl`. Rastro points the
+  browser's environment at the non-NVIDIA vendors
+  (`__EGL_VENDOR_LIBRARY_FILENAMES`, `VK_ICD_FILENAMES`,
+  `__GLX_VENDOR_LIBRARY_NAME=mesa`, `CUDA_VISIBLE_DEVICES=""`). Verified: zero
+  NVIDIA file descriptors with Wikipedia open. Opt out with
+  `RASTRO_KEEP_GPU_ENV=1`; values the user sets win.
+- TypeScript run directly by Node ≥ 22.5 (type stripping, `erasableSyntaxOnly`:
+  no enums, no parameter properties, no namespaces; relative imports end in
+  `.ts`).
 
-### Calidad
+### Quality
 
-- 336 tests en 19 archivos (unitarios, integración y e2e CLI → daemon → motor
-  real), `tsc` y `eslint` limpios.
-- Una revisión adversarial (20 hallazgos) y una auditoría de seguridad
-  (13 hallazgos, 5 altos) corregidas por completo y con test de regresión cada
-  una. Los 5 altos eran fugas de secretos por `--json`, snapshots, HAR y
-  `pw-trace`.
+- 336 tests across 19 files (unit, integration, and end-to-end CLI → daemon →
+  real engine), with `tsc` and `eslint` clean.
+- One adversarial review (20 findings) and one security audit (13 findings, 5
+  high) fixed in full, each with a regression test. The 5 high ones were secret
+  leaks through `--json`, snapshots, HAR and `pw-trace`.
 
 [0.1.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.1.0
