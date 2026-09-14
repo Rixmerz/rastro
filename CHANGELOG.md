@@ -5,6 +5,25 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — a recorded upload is replayable
+
+- **`upload` is a flow step.** It was not one at all, so recording a teacher
+  attaching a PDF fell through to the text-input branch and saved a `fill`
+  whose value was `C:\fakepath\Instrucciones.pdf` — the placeholder every
+  browser shows a page instead of the real path, on purpose. The flow silently
+  attached nothing.
+- Capturing a file input now records an `upload` step whose value is a
+  **parameter**, with the recorded file name kept as the parameter's
+  `description`. The path comes from the caller at run time, the way the course
+  URL already could. The upload sandbox applies to the resolved path, symlinks
+  and all.
+- Flow parameters accept a `description`.
+
+The **locator** is deliberately not parameterised: which section of a course a
+file belongs in is a judgment call that changes per upload, so the agent looks
+at the page and decides, then runs the flow for the mechanical part. A flow
+that quietly attaches a file to the wrong unit is worse than one that stops.
+
 ### Added
 
 - **Secret vault** in the system keyring (libsecret): `rastro secret

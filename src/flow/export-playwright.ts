@@ -202,6 +202,13 @@ function emitStep(step: FlowStep, indent: string, resp: RespCounter): string[] {
         expect,
         resp,
       );
+    case 'upload':
+      return emitActionLines(
+        indent,
+        `${bundleToLocator(raw['upload'] as Target)}.setInputFiles(${valueExprFor(raw['value'] as string)})`,
+        expect,
+        resp,
+      );
     case 'select':
       return emitActionLines(
         indent,

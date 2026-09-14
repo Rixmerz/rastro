@@ -40,6 +40,7 @@ export type FlowStep = StepBase &
     | { fill: Target; value: string; expect?: Expect }
     | { type: Target; value: string; expect?: Expect }
     | { select: Target; value: string; expect?: Expect }
+    | { upload: Target; value: string; expect?: Expect }
     | { press: string; target?: Target; expect?: Expect }
     | { wait: { text?: string; url?: string; ms?: number } }
     | { assert: Condition }
@@ -49,6 +50,9 @@ export type FlowStep = StepBase &
 export interface FlowParam {
   secret?: boolean;
   default?: string;
+  /** What the caller is expected to supply. A recorded upload puts the file's
+   * name here, since the flow cannot carry the path itself. */
+  description?: string;
   /** `secret:<name>` — the daemon resolves it against the keyring at run time,
    * so the value never travels through argv or the flow file. */
   from?: string;
@@ -74,6 +78,7 @@ export type StepKind =
   | 'fill'
   | 'type'
   | 'select'
+  | 'upload'
   | 'press'
   | 'wait'
   | 'assert'
@@ -81,7 +86,7 @@ export type StepKind =
 
 const STEP_KINDS: readonly StepKind[] = [
   'open', 'goto', 'back', 'forward', 'reload', 'click', 'dblclick', 'hover', 'check',
-  'uncheck', 'fill', 'type', 'select', 'press', 'wait', 'assert', 'if',
+  'uncheck', 'fill', 'type', 'select', 'upload', 'press', 'wait', 'assert', 'if',
 ];
 
 export function stepKind(step: FlowStep): StepKind {
@@ -132,6 +137,7 @@ const waitSchema = z.strictObject({
 const paramSchema = z.strictObject({
   secret: z.boolean().optional(),
   default: z.string().optional(),
+  description: z.string().optional(),
   from: z.string().regex(/^secret:/, 'only "secret:<name>" sources are supported').optional(),
 });
 
@@ -268,6 +274,9 @@ function parseStep(raw: unknown, path: string): FlowStep {
       break;
     case 'select':
       step = { select: parseTarget(obj['select'], stepPath), value: parseStringValue(obj['value'], `${path}.value`) };
+      break;
+    case 'upload':
+      step = { upload: parseTarget(obj['upload'], stepPath), value: parseStringValue(obj['value'], `${path}.value`) };
       break;
     case 'press': {
       const key = parseStringValue(obj['press'], stepPath);
@@ -483,7 +492,7 @@ export function expectationFromEffects(action: ActionRecord, attributed: Request
 }
 
 const INTERACTIVE_KINDS: ReadonlySet<ActionKind> = new Set([
-  'click', 'dblclick', 'hover', 'check', 'uncheck', 'fill', 'type', 'select', 'press',
+  'click', 'dblclick', 'hover', 'check', 'uncheck', 'fill', 'type', 'select', 'upload', 'press',
 ]);
 
 function withTarget(
@@ -496,7 +505,7 @@ function withTarget(
   return step as unknown as FlowStep;
 }
 
-function withValue(kind: 'fill' | 'type' | 'select', target: Target, value: string, expect: Expect | undefined): FlowStep {
+function withValue(kind: 'fill' | 'type' | 'select' | 'upload', target: Target, value: string, expect: Expect | undefined): FlowStep {
   const step: Record<string, unknown> = { [kind]: target, value };
   if (expect) step['expect'] = expect;
   return step as unknown as FlowStep;
@@ -524,6 +533,7 @@ export function actionsToFlow(
   const params: Record<string, FlowParam> = {};
   const steps: FlowStep[] = [];
   let secretCounter = 0;
+  let uploadCounter = 0;
   let stepIndex = 0;
 
   for (const action of actions) {
@@ -573,11 +583,24 @@ export function actionsToFlow(
         step = withValue(action.kind, action.target, value, expect);
         break;
       }
+      case 'upload': {
+        if (!action.target) break;
+        // The recording holds the file's *name*, never its path — a page is
+        // only ever shown `C:\fakepath\<name>`. So the path becomes a
+        // parameter the caller supplies, and the recorded name survives as the
+        // parameter's description so they know what was originally attached.
+        const paramName = `archivo${uploadCounter === 0 ? '' : String(uploadCounter + 1)}`;
+        uploadCounter += 1;
+        const recorded = action.value ?? '';
+        params[paramName] = recorded ? { description: `recorded as ${recorded}` } : {};
+        step = withValue('upload', action.target, `{{${paramName}}}`, expect);
+        break;
+      }
       case 'press':
         step = withPress(action.value ?? '', action.target, expect);
         break;
       default:
-        // forward, scroll, upload, submit, replay have no flow-step equivalent.
+        // forward, scroll, submit and replay have no flow-step equivalent.
         break;
     }
 

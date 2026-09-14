@@ -26,6 +26,9 @@ export interface FlowRunnerCore {
   readonly timeoutMs: number;
   open(params: Record<string, unknown>): Promise<RpcResult>;
   runAction(input: RunActionInput): Promise<RpcResult>;
+  /** The upload sandbox, shared with `act` rather than reimplemented: one rule
+   * in one place is how the symlink case stays covered in both. */
+  assertUploadAllowed(filePath: string): void;
 }
 
 export interface RunFlowOpts {
@@ -269,6 +272,23 @@ async function runActionStep(ctx: RunCtx, step: FlowStep, kind: StepKind, label:
             else if (kind === 'hover') await locator.hover({ timeout });
             else if (kind === 'check') await locator.check({ timeout });
             else await locator.uncheck({ timeout });
+          },
+        });
+        break;
+      }
+      case 'upload': {
+        const target = raw['upload'] as Target;
+        const { value } = resolveValue(raw['value'] as string, flow, paramValues, core.secrets);
+        core.assertUploadAllowed(value);
+        result = await core.runAction({
+          kind: 'upload',
+          source: 'flow',
+          target,
+          targetName: targetLabel(target),
+          value,
+          perform: async (page) => {
+            const locator = await resolve(page, target);
+            await locator.setInputFiles(value, { timeout: core.timeoutMs });
           },
         });
         break;

@@ -134,7 +134,7 @@ export function installRastroCapture(): void {
   // A click on any of these fires its own `change` event too (a `check`/
   // `uncheck` action, or a text edit committed on blur); skipping the click
   // here avoids recording the same human gesture as two actions.
-  const SKIP_CLICK_INPUT_TYPES = new Set(['text', 'password', 'email', 'search', 'number', 'checkbox', 'radio']);
+  const SKIP_CLICK_INPUT_TYPES = new Set(['text', 'password', 'email', 'search', 'number', 'checkbox', 'radio', 'file']);
 
   const onClick = (e: Event): void => {
     const target = e.target as Element | null;
@@ -168,6 +168,15 @@ export function installRastroCapture(): void {
       const type = (input.type || 'text').toLowerCase();
       if (type === 'checkbox' || type === 'radio') {
         send(input.checked ? 'check' : 'uncheck', target, undefined, false);
+        return;
+      }
+      if (type === 'file') {
+        // A page never learns where a chosen file came from: `input.value` is
+        // `C:\\fakepath\\<name>` everywhere, on purpose. Send the name so the
+        // saved flow can say what was attached, and let the caller supply the
+        // real path as a parameter at run time.
+        const picked = input.files && input.files.length > 0 ? input.files[0]!.name : '';
+        send('upload', target, picked, false);
         return;
       }
       const isPassword = type === 'password';

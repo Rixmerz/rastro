@@ -682,3 +682,40 @@ describe('record start on an already-open session', () => {
     60000,
   );
 });
+
+describe('upload as a flow step', () => {
+  test(
+    'attaches the file given at run time, and the sandbox still applies',
+    async () => {
+      const engine = await createEngine(nextSession('flow-upload'));
+      try {
+        await engine.open({ url: `${server.origin}/upload`, allowWrite: ['127.0.0.1'] });
+        const core = engine as unknown as { session?: { uploadDirs: string[] } };
+        const allowed = join(core.session!.uploadDirs[0]!, 'material.txt');
+        writeFileSync(allowed, 'contenido');
+
+        const flow: Flow = {
+          name: 'subir',
+          params: { archivo: { description: 'recorded as material.txt' } },
+          steps: [
+            { open: `${server.origin}/upload`, id: 's1' },
+            { upload: { label: 'Adjunto' }, value: '{{archivo}}', id: 's2' },
+          ] as unknown as Flow['steps'],
+        };
+        const file = writeFlow('flow-upload', flow);
+
+        const ok = await engine.flowRun({ file, params: { archivo: allowed } });
+        expect((ok.data as { ok: boolean; lines: string[] }).ok, (ok.data as { lines: string[] }).lines.join('\n')).toBe(true);
+
+        // The same flow pointed outside the sandbox must refuse, not attach.
+        const refused = await engine.flowRun({ file, params: { archivo: '/etc/hostname' } });
+        const data = refused.data as { ok: boolean; reason?: string };
+        expect(data.ok).toBe(false);
+        expect(data.reason).toMatch(/upload outside allowed dirs/);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    60000,
+  );
+});

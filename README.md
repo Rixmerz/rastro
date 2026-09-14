@@ -178,6 +178,15 @@ rastro record stop --save login-example
 rastro flow run login-example --param email=user@test.com
 ```
 
+**Files are parameters, never recorded paths.** A page is only ever shown
+`C:\fakepath\<name>` when someone picks a file, so a recorded `upload` step
+takes its path from `--param` at run time and keeps the recorded file name as
+the parameter's description. The upload sandbox still applies.
+
+What a flow deliberately does **not** capture is judgment. Where a file belongs
+inside a site varies per upload, so the agent looks at the page with `view`,
+decides, and runs the flow for the mechanical part.
+
 ## Daemon control
 
 Every session has its own daemon. `ps` shows it as `rastro[<session>]` and its

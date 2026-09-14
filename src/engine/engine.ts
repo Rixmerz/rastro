@@ -899,7 +899,7 @@ export class EngineCore implements Engine {
    * name; only the session's own uploads dir and whatever `open
    * --allow-upload` added are fair game. Symlinks are resolved first so a
    * link inside an allowed dir cannot point back out. */
-  private assertUploadAllowed(filePath: string): void {
+  assertUploadAllowed(filePath: string): void {
     const session = this.requireSession();
     let real: string;
     try {

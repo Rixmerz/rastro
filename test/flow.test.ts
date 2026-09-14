@@ -6,6 +6,7 @@ import {
   matchesRequestPattern,
   parseFlow,
   parseRequestPattern,
+  stepKind,
   stringifyFlow,
   substitute,
   type Flow,
@@ -534,4 +535,53 @@ test('importChromeRecording converts navigate + change + click + keyDown', () =>
 
 test('importChromeRecording rejects a recording missing steps', () => {
   expect(() => importChromeRecording({ title: 'x' })).toThrow(/invalid Chrome recording/);
+});
+
+test('an upload step parses, round-trips and keeps its parameter description', () => {
+  const yaml = [
+    'name: subir',
+    'params:',
+    '  archivo:',
+    '    description: recorded as Instrucciones.pdf',
+    'steps:',
+    '  - upload:',
+    '      label: Adjunto',
+    '    value: "{{archivo}}"',
+    '    id: s1',
+  ].join('\n');
+
+  const flow = parseFlow(yaml);
+  expect(stepKind(flow.steps[0]!)).toBe('upload');
+  expect(flow.params?.archivo?.description).toBe('recorded as Instrucciones.pdf');
+
+  const again = parseFlow(stringifyFlow(flow));
+  expect(again.params?.archivo?.description).toBe('recorded as Instrucciones.pdf');
+  expect(stepKind(again.steps[0]!)).toBe('upload');
+});
+
+test('a recorded file pick becomes a parameter, never the browser placeholder path', () => {
+  // What the page actually reports is the name; `C:\fakepath\...` is all a page
+  // is ever shown, so a flow that stored it would attach nothing on replay.
+  const flow = actionsToFlow(
+    'subir',
+    [
+      {
+        id: 1,
+        kind: 'upload',
+        source: 'human',
+        t0: 0,
+        t1: 1,
+        urlBefore: 'https://x.test/f',
+        target: { label: 'Adjunto', role: 'textbox' },
+        value: 'Instrucciones.pdf',
+      } as unknown as ActionRecord,
+    ],
+    new Map(),
+  );
+
+  const raw = flow.steps[0] as unknown as { upload: unknown; value: string };
+  expect(stepKind(flow.steps[0]!)).toBe('upload');
+  expect(raw.value).toBe('{{archivo}}');
+  expect(stringifyFlow(flow)).not.toContain('fakepath');
+  expect(flow.params?.archivo?.description).toContain('Instrucciones.pdf');
 });
