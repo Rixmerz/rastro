@@ -207,6 +207,13 @@ function downloadPage(): string {
   );
 }
 
+function uploadPage(): string {
+  return page(
+    'Upload',
+    '<main><h1>Upload</h1><label>Adjunto <input type="file" name="adjunto"></label></main>',
+  );
+}
+
 function shopPage(altOrigin: string): string {
   return page(
     'Shop',
@@ -379,6 +386,7 @@ export function startFixtureServer(): Promise<FixtureServer> {
       if (method === 'GET' && p === '/bignav') return sendHtml(res, bignavPage());
 
       if (method === 'GET' && p === '/download') return sendHtml(res, downloadPage());
+      if (method === 'GET' && p === '/upload') return sendHtml(res, uploadPage());
       if (method === 'GET' && p === '/files/factura.pdf') {
         res.writeHead(200, {
           'content-type': 'application/pdf',

@@ -61,6 +61,21 @@ All three came out of using Rastro against a real site, not out of the suite.
 - A download left Playwright's own artifact on disk at **0644** — a second,
   world-readable copy of the file, next to the 0600 one.
 
+### Tested, where it had been assumed
+
+Closing the gaps a full sweep exposed. No production code changed here — these
+paths worked; nothing had proven it.
+
+- **The upload sandbox now runs end to end through `act`**, against a fixture
+  page that finally has a file input. It used to call the private guard
+  directly, which left `setInputFiles` itself unproven. The **symlink escape**
+  is covered too: a link inside an allowed directory pointing at `/etc/hostname`
+  is refused — verified to slip through when the `realpath` resolution is
+  removed.
+- **`replay --yes` actually replays.** Only the refusal had been tested, so the
+  side-effecting path of a side-effecting command had never run. Its write guard
+  is covered as well: a replay to a host that was never allowed is blocked.
+
 ### Known, unfixed
 
 - The `human capture: overlapping fast gestures (R4)` test is **intermittent**:

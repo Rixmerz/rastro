@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, readFileSync as readFile, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, readFileSync as readFile, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -556,23 +556,34 @@ describe('effects scoping', () => {
 
 describe('upload guard', () => {
   test(
-    'S7: a path outside the session upload dirs is rejected; one inside is allowed',
+    'S7: a file inside an allowed dir uploads; one outside is refused, symlink and all',
     async () => {
       const engine = await createEngine(nextSession('upload-guard'));
       try {
-        await engine.open({ url: `${server.origin}/` });
-        // Not part of the public Engine surface: reaches into EngineCore the
-        // same way the GPU test already does, since there is no fixture page
-        // with a file input to drive this end to end through `act`.
-        const core = engine as unknown as {
-          assertUploadAllowed(path: string): void;
-          session?: { uploadDirs: string[] };
-        };
-        expect(() => core.assertUploadAllowed('/etc/hostname')).toThrow(/upload outside allowed dirs/);
+        await engine.open({ url: `${server.origin}/upload` });
+        const ref = await refByName(engine, 'Adjunto');
+
+        const core = engine as unknown as { session?: { uploadDirs: string[] } };
         const uploadDir = core.session!.uploadDirs[0]!;
-        const filePath = join(uploadDir, 'ok.txt');
-        writeFileSync(filePath, 'hi');
-        expect(() => core.assertUploadAllowed(filePath)).not.toThrow();
+        const allowed = join(uploadDir, 'ok.txt');
+        writeFileSync(allowed, 'hi');
+
+        // Driven through `act`, the way an agent reaches it, rather than by
+        // calling the private guard: that left setInputFiles itself unproven.
+        const ok = await engine.act({ ref, kind: 'upload', value: allowed });
+        expect(ok.text).toMatch(/^#\d+/);
+
+        await expect(engine.act({ ref, kind: 'upload', value: '/etc/hostname' })).rejects.toThrow(
+          /upload outside allowed dirs/,
+        );
+
+        // A symlink sitting inside the allowed dir but pointing out of it: the
+        // guard resolves the real path first, so this must not open the door.
+        const escape = join(uploadDir, 'escape.txt');
+        symlinkSync('/etc/hostname', escape);
+        await expect(engine.act({ ref, kind: 'upload', value: escape })).rejects.toThrow(
+          /upload outside allowed dirs/,
+        );
       } finally {
         await engine.shutdown();
       }
@@ -715,6 +726,59 @@ describe('select fails fast on a value that is not an option', () => {
         // The right value still works.
         const ok = await engine.act({ ref, kind: 'select', value: 'CL' });
         expect(ok.text).toMatch(/^#\d+/);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    60000,
+  );
+});
+
+describe('replay actually replays', () => {
+  test(
+    'with --yes it reissues the request; a host outside the allowlist is blocked',
+    async () => {
+      const engine = await createEngine(nextSession('replay-run'));
+      try {
+        await engine.open({ url: `${server.origin}/login`, allowWrite: ['127.0.0.1'] });
+        await engine.act({ ref: await refByName(engine, 'Email'), kind: 'fill', value: 'a@b.com' });
+        await engine.act({ ref: await refByName(engine, 'Contraseña'), kind: 'fill', value: 'right', secret: true });
+        const click = await engine.act({ ref: await refByName(engine, 'Entrar'), kind: 'click' });
+
+        const effects = await engine.effects({ action: actionId(click) });
+        const post = (effects.data as { requests: RequestRecord[] }).requests.find(
+          (r) => r.method === 'POST' && new URL(r.url).pathname === '/login',
+        );
+        expect(post).toBeDefined();
+
+        const before = (await engine.trace({})).data as TraceEvent[];
+        const res = await engine.replay({ id: post!.id, yes: true });
+        expect(res.text).toMatch(/^#\d+/);
+        expect(res.text).not.toContain('right');
+
+        const after = (await engine.trace({})).data as TraceEvent[];
+        expect(after.length).toBeGreaterThan(before.length);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    60000,
+  );
+
+  test(
+    'a replay to a host that was never allowed is blocked, not sent',
+    async () => {
+      const engine = await createEngine(nextSession('replay-blocked'));
+      try {
+        // No allowWrite at all: the replay must be refused the same way a live
+        // write would be.
+        await engine.open({ url: `${server.origin}/login` });
+        await engine.act({ ref: await refByName(engine, 'Entrar'), kind: 'click' });
+        const requests = (await engine.trace({ type: ['request'] })).data as TraceEvent[];
+        expect(requests.length).toBeGreaterThan(0);
+
+        const res = await engine.replay({ id: 'r1', yes: true });
+        expect(res.text).toContain('blocked');
       } finally {
         await engine.shutdown();
       }
