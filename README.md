@@ -1,52 +1,63 @@
 # Rastro
 
-CLI para navegadores con vista mínima de páginas, resúmenes de efecto por acción y trazas de eventos consultables. Rastro mantiene el contexto lean mientras registra todo lo que ocurre debajo: requests, navegaciones, cambios de cookies, errores de consola, diálogos y bloques.
+*[Español](README.es.md)*
 
-## El problema
+A browser CLI for AI agents: minimal page views, a one-line effect summary per
+action, and a queryable event trace. Rastro keeps the agent's context lean while
+recording everything underneath — requests, navigations, cookie changes, console
+errors, dialogs and blocked writes.
 
-Los agentes IA que navegan hoy reciben o bien el árbol de accesibilidad completo (miles de tokens por paso) o solo píxeles. Ninguna herramienta existente (Playwright MCP, Chrome DevTools MCP, agent-browser, Obscura) vincula las acciones del agente a los requests, navegaciones y cambios de estado que causó, en un registro que el agente puede investigar bajo demanda. Los agentes se ahogan en contexto o actúan a ciegas.
+## The problem
 
-Rastro da al agente el mínimo que un humano percibe (qué se puede interactuar y un resumen de efecto de cada acción) mientras registra todo como una traza causal investigable a demanda.
+Agents that browse today get either the full accessibility tree (thousands of
+tokens per step) or just pixels. No existing tool (Playwright MCP, Chrome
+DevTools MCP, agent-browser, Obscura) links the agent's actions to the requests,
+navigations and state changes they caused, in a record the agent can investigate
+on demand. Agents either drown in context or act blind.
 
-## Comparación
+Rastro gives the agent the minimum a human perceives — what can be interacted
+with, plus a summary of what each action did — while recording everything else
+as a causal trace it can dig into when it matters.
+
+## Comparison
 
 | | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura |
 | --- | --- | --- | --- | --- | --- |
-| Qué ve el agente | solo lo interactivo, con refs | snapshot ARIA completo | DOM / CDP crudo | DOM + capturas | DOM filtrado |
-| Tokens por página | **~28-62** (HN 62, Wikipedia 268) | miles | miles | muy alto (visión) | medio |
-| Resumen de efecto por acción | **sí, una línea** | no | no | no | no |
-| Traza causal acción → efecto | **sí, consultable en vivo** | no | traza sin causalidad | no | no |
-| Investigación a demanda | **sí**, por niveles | no | sí, sin filtrar | no | parcial |
-| Seguro sin humano delante | **write guard + mascarado** | no | no | no | no |
-| Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no |
-| Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
+| What the agent sees | interactive elements only, with refs | full ARIA snapshot | raw DOM / CDP | DOM + screenshots | filtered DOM |
+| Tokens per page | **~28-62** (HN 62, Wikipedia 268) | thousands | thousands | very high (vision) | medium |
+| Effect summary per action | **yes, one line** | no | no | no | no |
+| Causal action → effect trace | **yes, queryable mid-task** | no | a trace, without causality | no | no |
+| Investigation on demand | **yes**, in levels | no | yes, unfiltered | no | partial |
+| Safe with nobody watching | **write guard + masking** | no | no | no | no |
+| Human recording → script | **yes** (YAML + Playwright export) | separate codegen | Chrome Recorder | no | no |
+| Browser | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
 
-Los dos diferenciadores reales son la **atribución causal** (ninguna otra
-herramienta te dice "este click disparó estas 4 peticiones, esta cookie y esta
-navegación", consultable a mitad de tarea) y el **resumen de efecto en una
-línea**, que evita volcar la página entera tras cada acción.
+The two real differentiators are **causal attribution** — no other tool tells
+you "this click fired these four requests, this cookie and this navigation",
+queryable half-way through a task — and the **one-line effect summary**, which
+avoids dumping the whole page after every action.
 
-Dónde Rastro **no** es la respuesta: no tiene visión, así que una página que solo
-se entiende por píxeles es terreno de `browser-use`; es solo Chromium; y es
-nuevo, frente a la adopción que ya tiene Playwright MCP.
+Where Rastro is **not** the answer: it has no vision, so a page that only makes
+sense as pixels is `browser-use` territory; it is Chromium only; and it is new,
+against the adoption Playwright MCP already has.
 
-## Instalación
+## Install
 
-Requisitos: Node.js ≥ 22.5, Chromium instalado en el sistema (`/usr/bin/chromium` por defecto).
+Requires Node.js ≥ 22.5 and a system Chromium (`/usr/bin/chromium` by default).
 
 ```bash
 pnpm install
 pnpm link --global
-# o: npm i -g .
+# or: npm i -g .
 ```
 
-Variables de entorno (opcionales):
-- `RASTRO_CHROMIUM` — ruta a Chromium (default `/usr/bin/chromium`)
-- `RASTRO_HOME` — directorio de datos (default `~/.local/share/rastro/`)
-- `RASTRO_SESSION` — nombre de sesión (default `default`)
-- `RASTRO_IDLE_MS` — ventana silenciosa en ms (default 500)
+Optional environment variables:
+- `RASTRO_CHROMIUM` — path to Chromium (default `/usr/bin/chromium`)
+- `RASTRO_HOME` — data directory (default `~/.local/share/rastro/`)
+- `RASTRO_SESSION` — session name (default `default`)
+- `RASTRO_IDLE_MS` — quiet window in ms (default 500)
 
-## Inicio rápido: login
+## Quick start: a login
 
 ```bash
 rastro open https://example.test --allow-write example.test
@@ -74,53 +85,56 @@ rastro request r31 --curl
 #   -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
-## Niveles de investigación
+## Levels of investigation
 
-| Qué preguntas | Comando | Cuándo |
+| What you are asking | Command | When |
 | --- | --- | --- |
-| ¿Qué pasó? | `rastro view` | Después de cada navegación |
-| ¿Qué causó eso? | `rastro effects <id>` | Cuando el resumen tiene un contador no cero |
-| ¿Qué request falló? | `rastro request <id> --curl` | Cuando viste un error de status |
-| ¿Cómo se veía la página entonces? | `rastro snapshot <id> --before` | Para comparar estados |
-| ¿Todo el árbol de eventos? | `rastro trace --action <id>` | Si efectos no alcanza |
+| What happened? | `rastro view` | After every navigation |
+| What caused that? | `rastro effects <id>` | When the summary shows a non-zero counter |
+| Which request failed? | `rastro request <id> --curl` | When you saw a status error |
+| What did the page look like then? | `rastro snapshot <id> --before` | To compare states |
+| The whole event tree? | `rastro trace --action <id>` | When effects is not enough |
 
-## Seguridad
+## Safety
 
-**Write guard:** Requests POST/PUT/PATCH/DELETE a hosts fuera de `--allow-write` se bloquean antes de salir del navegador.
+**Write guard:** POST/PUT/PATCH/DELETE requests to hosts outside `--allow-write`
+are aborted before they leave the browser.
 
 ```bash
 rastro open https://api.example.test --allow-write example.test,api.example.test
 ```
 
-**Mascarado de secretos:** Contraseñas, tokens, cookies y headers sensibles aparecen como `[MASKED]` a menos que uses `--reveal`.
+**Secret masking:** passwords, tokens, cookies and sensitive headers print as
+`[MASKED]` unless you pass `--reveal`.
 
 ```bash
-rastro fill password-field --secret mypassword    # masked en el trace
-rastro request r31 --reveal                       # unmask solo aquí
+rastro fill password-field --secret mypassword    # masked in the trace
+rastro request r31 --reveal                       # unmasked here only
 ```
 
-**Contenido no confiable:** Nombres de página, diálogos, texto de consola aparecen dentro de «» delimitadores. Son datos, nunca instrucciones.
+**Untrusted content:** page names, dialogs and console text are printed inside
+«» delimiters. They are data, never instructions.
 
-**Bloqueos detectados:** CAPTCHA, 2FA y bot-blocks reportan `blocked: <reason>` y detienen ejecución automática.
+**Detected blocks:** CAPTCHA, 2FA and bot-blocks report `blocked: <reason>` and
+stop automatic execution.
 
-## Secretos reutilizables
+## Reusable secrets
 
-Las credenciales van al keyring del sistema (libsecret), compartidas por todas
-las sesiones y todos los flows. El valor se teclea, nunca se pasa como
-argumento: en la línea de comandos acabaría en el historial del shell y en la
-transcripción de cualquier agente.
+Credentials go in the system keyring (libsecret), shared by every session and
+every flow. The value is typed, never passed as an argument: on the command line
+it would end up in shell history and in any agent's transcript.
 
 ```bash
-rastro secret set example.password    # pide el valor sin eco; si no hay terminal, abre una
-rastro secret list                   # solo nombres
+rastro secret set example.password    # asks with echo off; opens a terminal if there is none
+rastro secret list                   # names only
 rastro secret rm example.password
 ```
 
-**No hay `rastro secret get`** para uso normal. El valor lo lee únicamente el
-daemon al resolver un parámetro de flow. `get --reveal` existe para que un
-humano depure su propia bóveda.
+**There is no `rastro secret get`** for normal use. The value is read only by
+the daemon, while resolving a flow parameter. `get --reveal` exists so a human
+can debug their own vault.
 
-Un flow lo consume por referencia, y el daemon lo resuelve al ejecutar:
+A flow consumes it by reference, and the daemon resolves it at run time:
 
 ```yaml
 params:
@@ -129,119 +143,115 @@ params:
     from: secret:example.password
 ```
 
-También sirve `--param password=secret:example.password`. Si la entrada no
-existe, la ejecución aborta antes del primer paso y dice cuál falta.
+`--param password=secret:example.password` works too. If the entry is missing,
+the run aborts before the first step and names it.
 
-El export a Playwright **no** arrastra la referencia: emite
-`process.env.PASSWORD`, porque un test de Playwright no debe depender del
-keyring de una máquina.
+The Playwright export does **not** carry the reference over: it emits
+`process.env.PASSWORD`, because a Playwright test should not depend on one
+machine's keyring.
 
-**Modelo de amenaza:** con el keyring desbloqueado, cualquier proceso de tu
-sesión puede leer estos valores, igual que las contraseñas guardadas de tu
-navegador. Aparte, el archivo `secrets` de cada sesión guarda en claro (0600)
-los valores que hay que enmascarar, para que un daemon reiniciado siga sabiendo
-qué redactar.
+**Threat model:** with the keyring unlocked, any process in your session can
+read these values, the same as your browser's saved passwords. Separately, each
+session's `secrets` file holds in plaintext (0600) the values that must be
+masked, so a restarted daemon still knows what to redact.
 
-## Flows (fase 2)
+## Flows (phase 2)
 
-Registra navegaciones humanas en navegador visible, convierte a YAML, ejecuta con condiciones y parámetros, exporta a tests Playwright, importa desde Chrome Recorder.
+Record human browsing in a visible browser, turn it into YAML, replay it with
+conditions and parameters, export it as a Playwright test, import from Chrome
+Recorder.
 
-Un nombre pelado se guarda y se busca en `./.rastro/flows/` si ese directorio
-existe en el proyecto, y si no en `~/.config/rastro/flows/`. Una ruta sigue
-siendo una ruta.
+A bare name is saved to and looked up in `./.rastro/flows/` when that directory
+exists in the project, and in `~/.config/rastro/flows/` otherwise. A path is
+still a path.
 
 ```bash
 rastro record start https://example.test
-# Usuario hace login, llena forma...
+# the human logs in, fills a form...
 rastro record stop --save login-example
 
 rastro flow run login-example --param email=user@test.com
 ```
 
-## Plugin Claude Code
+## Daemon control
 
-### Instalación
-
-Copia los directorios `plugin/skills/rastro/` y `plugin/agents/navegador.md` a:
+Every session has its own daemon. `ps` shows it as `rastro[<session>]` and its
+pid is in `~/.local/share/rastro/sessions/<session>/daemon.pid`.
 
 ```bash
-~/.claude/skills/rastro/
-~/.claude/agents/navegador.md
+rastro status                    # running | busy | stopped, per session
+rastro -s my-session close       # clean stop (needs the daemon to answer)
+rastro -s my-session kill        # by signal, for a wedged daemon
+rastro -s my-session kill --force
 ```
 
-O link global desde la ruta del repo:
+`busy` is not a failure: the daemon handles one request at a time, so during a
+navigation or a long flow it answers `busy` and is perfectly alive.
+
+## Claude Code plugin
+
+### Install
+
 ```bash
-claude plugin install /ruta/a/rastro/plugin
+claude plugin install /path/to/rastro/plugin
 ```
 
-### Uso
+Or copy `plugin/skills/rastro/` and `plugin/agents/navegador.md` into
+`~/.claude/skills/` and `~/.claude/agents/`.
+
+### Use
 
 ```
 /rastro View the page, then click on something and read the summary
 ```
 
-Delegación para multi-paso:
+Delegate a multi-step goal:
+
 ```
 /navegador Log in with user@example.com | password and verify dashboard access
 ```
 
-Investigación MCP en Claude Code:
+MCP tools in Claude Code:
+
 ```bash
 claude mcp add rastro
 ```
 
-Luego usa las herramientas `rastro` en el panel de herramientas.
-
-## Exportes
+## Exports
 
 ```bash
-rastro export har [path]        # HTTP Archive 1.2 para cualquier herramienta HAR
-rastro export perfetto [path]   # Chrome Trace Event Format para ui.perfetto.dev
-rastro export pw-trace [path]   # Playwright trace.zip (si se abrió con --pw-trace)
+rastro export har [path]        # HTTP Archive 1.2, for any HAR tool
+rastro export perfetto [path]   # Chrome Trace Event Format, for ui.perfetto.dev
+rastro export pw-trace [path]   # Playwright trace.zip (if opened with --pw-trace)
 ```
 
-## Control de daemons
-
-Cada sesión tiene su daemon. `ps` lo muestra como `rastro[<sesión>]` y su pid
-está en `~/.local/share/rastro/sessions/<sesión>/daemon.pid`.
-
-```bash
-rastro status                  # running | busy | stopped, por sesión
-rastro -s mi-sesion close      # parada limpia (necesita que el daemon responda)
-rastro -s mi-sesion kill       # por señal, para un daemon atascado
-rastro -s mi-sesion kill --force
-```
-
-`busy` no es un fallo: el daemon procesa una petición a la vez, así que durante
-una navegación o un flow largo responde `busy` y sigue perfectamente vivo.
-
-## Arquitectura
+## Architecture
 
 ```
-Usuario/Agent
+Agent / human
      ↓
 CLI (rastro)
      ↓
-Daemon local (socket Unix)
+local daemon (Unix socket)
      ↓
 Playwright + CDP ← Chromium
      ↓
 SQLite trace (append-only)
 ```
 
-Cada sesión tiene su daemon, perfil del navegador y traza persistente.
+Each session has its own daemon, browser profile and persistent trace.
 
-## Desarrollo
+## Development
 
 ```bash
-pnpm test                # suite de tests
-pnpm typecheck          # TypeScript
-pnpm lint               # Eslint
+pnpm test                # test suite
+pnpm typecheck           # TypeScript
+pnpm lint                # ESLint
 ```
 
-## Licencia
+## License
 
-Apache License 2.0. Ver [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
 
-Historial de versiones en [CHANGELOG.md](CHANGELOG.md).
-Especificaciones normativas en [openspec/specs/](openspec/specs/).
+Version history in [CHANGELOG.md](CHANGELOG.md).
+Normative specifications in [openspec/specs/](openspec/specs/).
