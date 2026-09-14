@@ -14,6 +14,7 @@ import { resolveBundle } from '../perception/locators.ts';
 import { quote } from '../format/text.ts';
 import type { Session } from '../engine/session.ts';
 import type { SecretRegistry } from '../security/redact.ts';
+import { parseSecretRef, secretGet } from '../security/vault.ts';
 import type { RunActionInput } from '../engine/engine.ts';
 
 /** The slice of `EngineCore` the runner needs; `EngineCore` satisfies this
@@ -98,13 +99,48 @@ function referencedParams(raw: string): string[] {
   return [...raw.matchAll(PARAM_REF)].map((m) => m[1]!);
 }
 
-function buildParamValues(flow: Flow, provided: Record<string, string> | undefined): Record<string, string> {
+/**
+ * Resolves the flow's parameters, including `secret:<name>` references against
+ * the keyring. This runs inside the daemon on purpose: had the CLI resolved
+ * them, the value would have to travel as an RPC parameter and would show up in
+ * the argv of anything spawned in between. A missing entry throws here, before
+ * the first step, rather than half-way through a login.
+ */
+function buildParamValues(
+  flow: Flow,
+  provided: Record<string, string> | undefined,
+  secrets: SecretRegistry,
+): Record<string, string> {
   const values: Record<string, string> = {};
+  const fromKeyring = (name: string, ref: string): string => {
+    const value = fromVault(name, ref);
+    // Anything that came out of the keyring is a secret whether or not the
+    // flow said so, so mark the param: `resolveValue` reads that flag to
+    // decide how the action is recorded, and the registry masks the value in
+    // every other output.
+    const def = flow.params?.[name];
+    if (def) def.secret = true;
+    secrets.add(value);
+    return value;
+  };
   for (const [name, def] of Object.entries(flow.params ?? {})) {
-    if (def.default !== undefined) values[name] = def.default;
+    if (def.from !== undefined) values[name] = fromKeyring(name, def.from);
+    else if (def.default !== undefined) values[name] = def.default;
   }
-  Object.assign(values, provided ?? {});
+  for (const [name, raw] of Object.entries(provided ?? {})) {
+    values[name] = parseSecretRef(raw) === null ? raw : fromKeyring(name, raw);
+  }
   return values;
+}
+
+function fromVault(param: string, ref: string): string {
+  const entry = parseSecretRef(ref);
+  if (entry === null) throw new RastroError(`param ${param}: "${ref}" is not a secret reference`, 'use secret:<name>');
+  const value = secretGet(entry);
+  if (value === null) {
+    throw new RastroError(`param ${param}: no secret «${entry}» in the keyring`, `store it: rastro secret set ${entry}`);
+  }
+  return value;
 }
 
 /** Substitutes `raw`'s params and, if any referenced param is `secret`,
@@ -397,7 +433,7 @@ export async function runFlow(
   const ctx: RunCtx = {
     core: ctxIn.core,
     flow,
-    paramValues: buildParamValues(flow, opts.params),
+    paramValues: buildParamValues(flow, opts.params, ctxIn.core.secrets),
     lines: [],
     reqRef: { current: [] },
     countRef: { count: 0 },

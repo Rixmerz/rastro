@@ -49,6 +49,9 @@ export type FlowStep = StepBase &
 export interface FlowParam {
   secret?: boolean;
   default?: string;
+  /** `secret:<name>` — the daemon resolves it against the keyring at run time,
+   * so the value never travels through argv or the flow file. */
+  from?: string;
 }
 
 export interface Flow {
@@ -129,6 +132,7 @@ const waitSchema = z.strictObject({
 const paramSchema = z.strictObject({
   secret: z.boolean().optional(),
   default: z.string().optional(),
+  from: z.string().regex(/^secret:/, 'only "secret:<name>" sources are supported').optional(),
 });
 
 // S8 (CWE-94): a param name is emitted as a bare identifier into generated

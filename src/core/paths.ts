@@ -1,7 +1,7 @@
 import { RastroError } from './types.ts';
-import { mkdirSync, chmodSync } from 'node:fs';
+import { mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const SESSION_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -20,6 +20,35 @@ export function runtimeDir(): string {
   const base = process.env.XDG_RUNTIME_DIR;
   return base ? join(base, 'rastro') : join(rastroHome(), 'run');
 }
+
+/**
+ * Where a flow named without a path lives: the repository's own `.rastro/flows`
+ * when it exists, so flows land in git next to the code they drive, and the
+ * user's config directory otherwise. Config and not `rastroHome()`, because
+ * these are hand-authored source — `rastroHome()` holds what Rastro generated
+ * and may delete.
+ */
+export function flowsDir(): string {
+  const local = join(process.cwd(), '.rastro', 'flows');
+  if (existsSync(local)) return local;
+  const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+  return join(base, 'rastro', 'flows');
+}
+
+/**
+ * Resolves a `flow save`/`flow run` argument. Anything that looks like a path
+ * (a separator, or a .yaml/.yml suffix) stays a path, so every existing
+ * invocation keeps working; a bare name resolves under `flowsDir()`.
+ */
+export function resolveFlowRef(arg: string): string {
+  if (arg.includes('/') || /\.ya?ml$/i.test(arg)) return resolve(arg);
+  if (!FLOW_NAME.test(arg)) {
+    throw new RastroError(`invalid flow name "${arg}"`, 'use letters, digits, dot, dash or underscore, or give a path');
+  }
+  return join(flowsDir(), `${arg}.yaml`);
+}
+
+const FLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /** Creates the directory (recursively) and restricts it to the owner. */
 export function ensurePrivateDir(dir: string): string {

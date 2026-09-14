@@ -9,7 +9,9 @@ import { join } from 'node:path';
 import { RastroError } from '../core/types.ts';
 import type { RpcMethod } from '../core/types.ts';
 import { call, listSessions } from '../daemon/client.ts';
-import { ensurePrivateDir, sessionPaths } from '../core/paths.ts';
+import { ensurePrivateDir, resolveFlowRef, sessionPaths } from '../core/paths.ts';
+import { secretGet, secretList, secretRemove, secretSet } from '../security/vault.ts';
+import { readSecretInteractively } from './prompt.ts';
 import {
   UsageError,
   USAGE,
@@ -284,7 +286,7 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
       to: { type: 'string' },
       name: { type: 'string' },
     });
-    const file = requirePositional(positionals, 0, 'file', USAGE['flow save'] ?? '');
+    const file = resolveFlowRef(requirePositional(positionals, 0, 'file', USAGE['flow save'] ?? ''));
     return {
       method: 'flowSave',
       params: {
@@ -300,7 +302,7 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
       from: { type: 'string' },
       param: { type: 'string', multiple: true },
     });
-    const file = requirePositional(positionals, 0, 'file', USAGE['flow run'] ?? '');
+    const file = resolveFlowRef(requirePositional(positionals, 0, 'file', USAGE['flow run'] ?? ''));
     return {
       method: 'flowRun',
       params: {
@@ -364,6 +366,52 @@ function printResult(session: string, command: string, json: boolean, result: { 
   console.log(lines.slice(0, 20).join('\n'));
 }
 
+/**
+ * The vault lives entirely in the CLI process: no daemon, no session. A stored
+ * value is only ever read again inside the daemon while a flow resolves a
+ * `secret:` parameter, which is why there is no plain `get` here.
+ */
+function runSecret(args: string[], json: boolean): void {
+  const [sub, name, extra] = args;
+  const reveal = args.includes('--reveal');
+
+  if (sub === 'list') {
+    const names = secretList();
+    console.log(json ? JSON.stringify(names) : names.join('\n'));
+    return;
+  }
+
+  if (sub === undefined || name === undefined) {
+    throw new RastroError(`usage: ${USAGE.secret ?? 'rastro secret set|list|rm <name>'}`);
+  }
+
+  if (sub === 'set') {
+    // A value on the command line would land in shell history and in any
+    // agent transcript, which is the whole thing this command exists to avoid.
+    if (extra !== undefined && !extra.startsWith('--')) {
+      throw new RastroError('the value cannot be passed as an argument', `run: rastro secret set ${name}`);
+    }
+    secretSet(name, readSecretInteractively(`value for ${name}`, ['secret', 'set', name]));
+    console.log(`stored ${name}`);
+    return;
+  }
+
+  if (sub === 'rm') {
+    console.log(secretRemove(name) ? `removed ${name}` : `no secret ${name}`);
+    return;
+  }
+
+  if (sub === 'get') {
+    if (!reveal) throw new RastroError('refusing to print a secret', 'add --reveal if you really mean it (human use only)');
+    const value = secretGet(name);
+    if (value === null) throw new RastroError(`no secret ${name}`);
+    console.log(value);
+    return;
+  }
+
+  throw new RastroError(`unknown secret subcommand "${sub}"`, USAGE.secret);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const { session, json, help, version, rest } = parseGlobalFlags(argv);
@@ -387,6 +435,15 @@ async function main(): Promise<void> {
   if ((command === 'record' || command === 'flow') && (args[0] === undefined || args.includes('-h') || args.includes('--help'))) {
     const key = args[0] === undefined ? command : `${command} ${args[0]}`;
     console.log(`usage: ${USAGE[key] ?? TOP_LEVEL_HELP}`);
+    return;
+  }
+
+  if (command === 'secret') {
+    try {
+      runSecret(args, json);
+    } catch (err) {
+      process.exitCode = printError(err);
+    }
     return;
   }
 

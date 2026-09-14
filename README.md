@@ -103,16 +103,55 @@ rastro request r31 --reveal                       # unmask solo aquí
 
 **Bloqueos detectados:** CAPTCHA, 2FA y bot-blocks reportan `blocked: <reason>` y detienen ejecución automática.
 
+## Secretos reutilizables
+
+Las credenciales van al keyring del sistema (libsecret), compartidas por todas
+las sesiones y todos los flows. El valor se teclea, nunca se pasa como
+argumento: en la línea de comandos acabaría en el historial del shell y en la
+transcripción de cualquier agente.
+
+```bash
+rastro secret set example.password    # pide el valor sin eco; si no hay terminal, abre una
+rastro secret list                   # solo nombres
+rastro secret rm example.password
+```
+
+**No hay `rastro secret get`** para uso normal. El valor lo lee únicamente el
+daemon al resolver un parámetro de flow. `get --reveal` existe para que un
+humano depure su propia bóveda.
+
+Un flow lo consume por referencia, y el daemon lo resuelve al ejecutar:
+
+```yaml
+params:
+  password:
+    secret: true
+    from: secret:example.password
+```
+
+También sirve `--param password=secret:example.password`. Si la entrada no
+existe, la ejecución aborta antes del primer paso y dice cuál falta.
+
+**Modelo de amenaza:** con el keyring desbloqueado, cualquier proceso de tu
+sesión puede leer estos valores, igual que las contraseñas guardadas de tu
+navegador. Aparte, el archivo `secrets` de cada sesión guarda en claro (0600)
+los valores que hay que enmascarar, para que un daemon reiniciado siga sabiendo
+qué redactar.
+
 ## Flows (fase 2)
 
 Registra navegaciones humanas en navegador visible, convierte a YAML, ejecuta con condiciones y parámetros, exporta a tests Playwright, importa desde Chrome Recorder.
 
+Un nombre pelado se guarda y se busca en `./.rastro/flows/` si ese directorio
+existe en el proyecto, y si no en `~/.config/rastro/flows/`. Una ruta sigue
+siendo una ruta.
+
 ```bash
 rastro record start https://example.test
 # Usuario hace login, llena forma...
-rastro record stop --save flow.yaml
+rastro record stop --save login-example
 
-rastro flow run flow.yaml --param email=user@test.com
+rastro flow run login-example --param email=user@test.com
 ```
 
 ## Plugin Claude Code

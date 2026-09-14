@@ -577,3 +577,24 @@ describe('flow export/import', () => {
     }
   });
 });
+
+describe('secret references in flow params', () => {
+  test(
+    'a missing keyring entry aborts before the first step, naming the entry',
+    async () => {
+      const engine = await createEngine(nextSession('vault-missing'));
+      try {
+        const flow = loginFlow('vault-missing', 'POST /login 2xx');
+        // `from` replaces the caller-supplied value: the flow now says where to
+        // get the password rather than expecting it on the command line.
+        flow.params = { ...flow.params, password: { secret: true, from: 'secret:rastro.test.definitely-absent' } };
+        const file = writeFlow('vault-missing', flow);
+
+        await expect(engine.flowRun({ file })).rejects.toThrow(/rastro\.test\.definitely-absent/);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});

@@ -5,6 +5,20 @@ Versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+### Añadido
+
+- **Bóveda de secretos** en el keyring del sistema (libsecret): `rastro secret
+  set|list|rm`. `set` pide el valor por la terminal sin eco y lo rechaza si
+  viene como argumento; si el proceso no tiene terminal, abre una. **No hay
+  `get`** salvo `--reveal`, documentado como uso humano.
+- Los parámetros de un flow aceptan `from: secret:<nombre>` (o
+  `--param k=secret:<nombre>`). El **daemon** resuelve la referencia al
+  ejecutar, registra el valor para enmascararlo y aborta antes del primer paso
+  si la entrada no existe. El valor nunca pasa por `argv`.
+- `rastro flow save|run` aceptan un **nombre pelado**, que se resuelve contra
+  `./.rastro/flows/` y, si no existe, `~/.config/rastro/flows/`. Una ruta sigue
+  tratándose como ruta.
+
 ### Corregido
 
 Los tres salieron de usar Rastro contra un sitio real, no de la suite.
