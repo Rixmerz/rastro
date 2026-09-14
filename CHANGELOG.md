@@ -19,9 +19,12 @@ Los tres salieron de usar Rastro contra un sitio real, no de la suite.
 
 ### Conocido, sin corregir
 
-- Solo se guarda el cuerpo de las respuestas de tipo `document`. Las de `xhr`
-  y `fetch` están en la lista pero llegan vacías al store, así que
-  `request <id> --body` no las tiene.
+- Contra el servidor de pruebas en loopback, las peticiones lanzadas por
+  `fetch()` nunca emiten `Network.loadingFinished`, así que su cuerpo no se
+  guarda y ningún test puede cubrir esa ruta. **Contra sitios reales sí
+  funciona** (verificado con dos XHR POST distintos, uno de 165 KB), de modo
+  que es una limitación del fixture, no del recorder. Los tests de cuerpo se
+  apoyan por ahora en la respuesta de navegación.
 
 ## [0.1.0] — 2026-09-13
 
