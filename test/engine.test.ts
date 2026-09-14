@@ -377,6 +377,13 @@ describe('download', () => {
         expect(dl).toBeDefined();
         const path = (dl!.data as { path: string }).path;
         expect(existsSync(path)).toBe(true);
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+
+        // saveAs copies out of Playwright's own artifact, which used to stay
+        // behind at 0644 — a second, world-readable copy of the download.
+        const dir = path.slice(0, path.lastIndexOf('/'));
+        const leftovers = readdirSync(dir).filter((f) => f !== 'factura.pdf');
+        expect(leftovers).toEqual([]);
       } finally {
         await engine.shutdown();
       }

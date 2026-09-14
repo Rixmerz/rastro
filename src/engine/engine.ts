@@ -997,7 +997,10 @@ export class EngineCore implements Engine {
     }
 
     const text = formatRequest(rec, { body, reveal }, this.secrets) + (files.length ? `\nbody written to ${files[0]}` : '');
-    return { text, data: this.maskData(rec, reveal), ...(files.length ? { files } : {}) };
+    // --json used to drop the body entirely, so a caller asking for both got
+    // headers and nothing else. Carry whatever the text form carries.
+    const data = { ...this.maskData(rec, reveal), ...(body ? { body: body.text, bodyTruncated: body.truncated } : {}) };
+    return { text, data, ...(files.length ? { files } : {}) };
   }
 
   async snapshot(rawParams: Record<string, unknown>): Promise<RpcResult> {
@@ -1093,8 +1096,10 @@ export class EngineCore implements Engine {
     } else {
       result = await page.evaluate(params.expr);
     }
-    const text = JSON.stringify(result ?? null).slice(0, 1024);
-    return { text, data: result };
+    // No truncation here: the CLI already spills anything over 4 KB to a 0600
+    // file. Cutting at 1 KB in the engine silently ate the tail of any real
+    // extraction and left no marker saying so.
+    return { text: JSON.stringify(result ?? null), data: result };
   }
 
   async replay(rawParams: Record<string, unknown>): Promise<RpcResult> {

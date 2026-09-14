@@ -386,3 +386,45 @@ describe('error exit codes', () => {
     60000,
   );
 });
+
+describe('large eval output survives instead of being cut at 1 KB', () => {
+  test(
+    'a 10 KB result spills to a file rather than losing its tail',
+    async () => {
+      const session = track('eval-big');
+      const opened = await runCli(['-s', session, 'open', `${server.origin}/login`]);
+      expect(opened.code).toBe(0);
+
+      // The engine used to slice(0, 1024) here, so an extraction that returned
+      // more than that came back silently truncated with no marker and no file.
+      const { stdout, code } = await runCli(['-s', session, 'eval', '"x".repeat(10000)']);
+      expect(code).toBe(0);
+
+      const match = /written to (\S+)/.exec(stdout);
+      if (!match) throw new Error(`expected a spill file, got: ${stdout}`);
+      expect(readFileSync(match[1], 'utf8')).toContain('x'.repeat(10000));
+    },
+    60000,
+  );
+});
+
+describe('request --body reaches --json callers too', () => {
+  test(
+    'the body is in data, not only in the text form',
+    async () => {
+      const session = track('req-json');
+      const opened = await runCli(['-s', session, 'open', `${server.origin}/panel`, '--allow-write', '127.0.0.1']);
+      expect(opened.code).toBe(0);
+
+      const text = await runCli(['-s', session, 'request', 'r1', '--body']);
+      expect(text.stdout).toContain('--- body');
+
+      // --json used to return headers and timing only: a caller asking for the
+      // body in machine-readable form got everything except the body.
+      const { stdout, code } = await runCli(['-s', session, 'request', 'r1', '--body', '--json']);
+      expect(code).toBe(0);
+      expect(Object.keys(JSON.parse(stdout) as Record<string, unknown>)).toContain('body');
+    },
+    60000,
+  );
+});

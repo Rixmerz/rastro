@@ -369,6 +369,14 @@ export class Session {
         } catch {
           // best effort only: saveAs already succeeded, permissions are cosmetic.
         }
+        // saveAs copies out of Playwright's own artifact, which stays on disk at
+        // the default 0644 — a second, world-readable copy of whatever was
+        // downloaded. Drop it so only the 0600 file above survives.
+        try {
+          await download.delete();
+        } catch {
+          // best effort only: the 0600 copy is already in place.
+        }
         let size: number | undefined;
         try {
           size = statSync(dest).size;
