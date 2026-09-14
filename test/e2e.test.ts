@@ -400,9 +400,9 @@ describe('large eval output survives instead of being cut at 1 KB', () => {
       const { stdout, code } = await runCli(['-s', session, 'eval', '"x".repeat(10000)']);
       expect(code).toBe(0);
 
-      const match = /written to (\S+)/.exec(stdout);
-      if (!match) throw new Error(`expected a spill file, got: ${stdout}`);
-      expect(readFileSync(match[1], 'utf8')).toContain('x'.repeat(10000));
+      const spillPath = /written to (\S+)/.exec(stdout)?.[1];
+      if (!spillPath) throw new Error(`expected a spill file, got: ${stdout}`);
+      expect(readFileSync(spillPath, 'utf8')).toContain('x'.repeat(10000));
     },
     60000,
   );
