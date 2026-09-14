@@ -3,6 +3,26 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Corregido
+
+Los tres salieron de usar Rastro contra un sitio real, no de la suite.
+
+- `eval` cortaba el resultado en 1024 bytes dentro del motor, sin marcador y
+  sin volcarlo a un archivo: cualquier extracción grande perdía la cola en
+  silencio. Ahora no corta, y el CLI vuelca a un archivo 0600 lo que pasa de
+  4 KB, como ya hacía con el resto de las salidas.
+- `request --body --json` devolvía cabeceras y tiempos pero nunca el cuerpo.
+- Una descarga dejaba en disco el artefacto propio de Playwright a **0644**,
+  una segunda copia legible por todos junto al archivo 0600.
+
+### Conocido, sin corregir
+
+- Solo se guarda el cuerpo de las respuestas de tipo `document`. Las de `xhr`
+  y `fetch` están en la lista pero llegan vacías al store, así que
+  `request <id> --body` no las tiene.
+
 ## [0.1.0] — 2026-09-13
 
 Primera versión. Rastro nace completo: percepción mínima, traza causal,
