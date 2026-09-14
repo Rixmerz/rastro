@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { call } from '../src/daemon/client.ts';
+import { sessionPaths } from '../src/core/paths.ts';
 import { startFixtureServer } from './fixtures/server.ts';
 import type { FixtureServer } from './fixtures/server.ts';
 
@@ -362,6 +363,29 @@ describe('status reflects daemon liveness', () => {
     },
     60000,
   );
+
+  test(
+    'a busy daemon is reported busy and keeps its socket',
+    async () => {
+      const session = track('busy');
+      expect((await runCli(['-s', session, 'open', `${server.origin}/login`])).code).toBe(0);
+      const socket = sessionPaths(session).socket;
+
+      // The daemon serialises requests, so this occupies it. `status` used to
+      // time out, call that death, and delete the socket of a healthy daemon —
+      // orphaning it with its browser still open.
+      const busy = runCli(['-s', session, 'eval', 'new Promise((r) => setTimeout(() => r(1), 8000))']);
+      await new Promise((r) => setTimeout(r, 1000));
+
+      const during = await runCli(['-s', session, 'status']);
+      expect(during.stdout).toContain(`${session}: busy`);
+      expect(existsSync(socket)).toBe(true);
+
+      expect((await busy).code).toBe(0);
+      expect((await runCli(['-s', session, 'status'])).stdout).toContain(`${session}: running`);
+    },
+    60000,
+  );
 });
 
 describe('error exit codes', () => {
@@ -427,4 +451,38 @@ describe('request --body reaches --json callers too', () => {
     },
     60000,
   );
+});
+
+describe('kill rescues a daemon that close cannot reach', () => {
+  test(
+    'the daemon is findable by pid and by process title, and kill stops it',
+    async () => {
+      const session = track('kill');
+      expect((await runCli(['-s', session, 'open', `${server.origin}/login`])).code).toBe(0);
+
+      const pidFile = sessionPaths(session).pid;
+      expect(existsSync(pidFile)).toBe(true);
+      const pid = Number(readFileSync(pidFile, 'utf8').trim());
+      expect(Number.isInteger(pid)).toBe(true);
+      // Signal 0 only checks the process exists.
+      expect(() => process.kill(pid, 0)).not.toThrow();
+
+      const killed = await runCli(['-s', session, 'kill']);
+      expect(killed.code).toBe(0);
+      expect(killed.stdout).toContain(String(pid));
+
+      for (let i = 0; i < 50 && existsSync(pidFile); i += 1) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(existsSync(pidFile)).toBe(false);
+      expect((await runCli(['-s', session, 'status'])).stdout).toContain(`${session}: stopped`);
+    },
+    60000,
+  );
+
+  test('killing a session that has no daemon says so and exits 0', async () => {
+    const { stdout, code } = await runCli(['-s', track('kill-none'), 'kill']);
+    expect(code).toBe(0);
+    expect(stdout).toContain('no daemon');
+  }, 30000);
 });

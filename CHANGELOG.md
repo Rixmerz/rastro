@@ -19,6 +19,25 @@ Versionado [SemVer](https://semver.org/lang/es/).
   `./.rastro/flows/` y, si no existe, `~/.config/rastro/flows/`. Una ruta sigue
   tratándose como ruta.
 
+### Corregido — daemons zombie
+
+- **`rastro status` mataba daemons sanos.** Un daemon procesa una petición a la
+  vez, así que durante una navegación, un flow o un XHR lento el `status` se
+  quedaba esperando; al vencer los 2 s se daba por muerto y **se le borraba el
+  socket**. El siguiente comando no lo encontraba, levantaba un segundo daemon
+  sobre el mismo perfil de navegador, y el primero quedaba huérfano con su
+  Chromium abierto. Justo el zombie que esa función debía reportar. Ahora un
+  timeout se informa como `busy`; solo un socket rechazado o ausente se limpia.
+
+### Añadido — control de daemons
+
+- El daemon escribe `daemon.pid` (0600) y se llama `rastro[<sesión>]` en `ps`.
+- `rastro kill [--force]` lo detiene por señal. `close` viaja por la misma cola
+  serializada que todo lo demás, así que no llega a un daemon atascado, que es
+  exactamente cuando hace falta. Si el proceso ya no está, limpia los archivos
+  que dejó.
+- `rastro status` distingue `running`, `busy` y `stopped` en vez de mentir.
+
 ### Corregido
 
 Los tres salieron de usar Rastro contra un sitio real, no de la suite.

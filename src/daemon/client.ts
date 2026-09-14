@@ -139,20 +139,37 @@ export async function call(
   }
 }
 
-/** Lists sessions with a live socket, pinging each without spawning. */
-export async function listSessions(): Promise<{ session: string; alive: boolean }[]> {
+export type SessionState = 'running' | 'busy' | 'stopped';
+
+/**
+ * Lists sessions with a socket, pinging each without spawning.
+ *
+ * A timeout is NOT death. The daemon serialises requests, so anything slow —
+ * a navigation, a flow, a 9-second XHR — leaves `status` waiting, and treating
+ * that as dead used to delete the socket of a perfectly healthy daemon. The
+ * next command then found no socket, spawned a second daemon on the same
+ * browser profile, and the first was orphaned with its Chromium still open:
+ * exactly the zombie this function was supposed to report on. Only a refused
+ * or absent socket means nobody is listening, and only then is it cleaned up.
+ */
+export async function listSessions(): Promise<{ session: string; state: SessionState }[]> {
   const dir = runtimeDir();
   if (!existsSync(dir)) return [];
   const sockets = readdirSync(dir).filter((f) => f.endsWith('.sock'));
-  const results: { session: string; alive: boolean }[] = [];
+  const results: { session: string; state: SessionState }[] = [];
   for (const file of sockets) {
     const session = file.slice(0, -'.sock'.length);
     try {
       await call(session, 'status', {}, { spawn: false, timeoutMs: 2_000 });
-      results.push({ session, alive: true });
-    } catch {
-      rmSync(sessionPaths(session).socket, { force: true });
-      results.push({ session, alive: false });
+      results.push({ session, state: 'running' });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ECONNREFUSED') {
+        rmSync(sessionPaths(session).socket, { force: true });
+        results.push({ session, state: 'stopped' });
+      } else {
+        results.push({ session, state: 'busy' });
+      }
     }
   }
   return results;

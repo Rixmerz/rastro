@@ -136,7 +136,7 @@ describe('daemon lifecycle', () => {
     const session = track('status-session');
     await call(session, 'view', {});
     const before = await listSessions();
-    expect(before.find((s) => s.session === session)).toEqual({ session, alive: true });
+    expect(before.find((s) => s.session === session)).toEqual({ session, state: 'running' });
 
     await call(session, 'close', {}, { spawn: false });
     await waitUntilGone(socketPath(session));

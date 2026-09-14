@@ -67,6 +67,7 @@ export interface SessionPaths {
   out: string;
   profile: string;
   socket: string;
+  pid: string;
 }
 
 export function sessionPaths(name: string): SessionPaths {
@@ -82,6 +83,7 @@ export function sessionPaths(name: string): SessionPaths {
     out: join(root, 'out'),
     profile: join(rastroHome(), 'profiles', name),
     socket: join(runtimeDir(), `${name}.sock`),
+    pid: join(root, 'daemon.pid'),
   };
 }
 

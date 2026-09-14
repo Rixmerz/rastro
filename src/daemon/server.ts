@@ -4,7 +4,7 @@
 
 import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
-import { appendFileSync, chmodSync, rmSync } from 'node:fs';
+import { appendFileSync, chmodSync, rmSync, writeFileSync } from 'node:fs';
 import type { Engine, RpcRequest, RpcResponse, RpcResult } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
 import { assertSocketPathFits, ensurePrivateDir, runtimeDir, sessionPaths } from '../core/paths.ts';
@@ -57,6 +57,12 @@ export async function runDaemon(
   ensurePrivateDir(paths.root);
   ensurePrivateDir(runtimeDir());
   rmSync(paths.socket, { force: true });
+
+  // The pid is what makes a wedged daemon manageable: a socket that nobody
+  // answers says nothing about whether a process is still holding a browser.
+  writeFileSync(paths.pid, `${String(process.pid)}\n`, { mode: 0o600 });
+  // And this is what makes it findable in `ps` without decoding an argv.
+  process.title = `rastro[${session}]`;
 
   let idleTimer: ReturnType<typeof setTimeout>;
   let queue = Promise.resolve();
@@ -151,6 +157,7 @@ export async function runDaemon(
       process.off('SIGINT', onSignal);
       server.close();
       rmSync(paths.socket, { force: true });
+      rmSync(paths.pid, { force: true });
       // R17: engine.close() (the RPC method) already shut the engine down;
       // calling engine.shutdown() again here hit an already-closed database.
       if (!opts.engineAlreadyShutDown) {

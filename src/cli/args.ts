@@ -112,6 +112,7 @@ export const USAGE: Record<string, string> = {
   export: 'rastro export <har|perfetto|pw-trace> [path] [--bodies] [--reveal]',
   'record start': 'rastro record start [url] [--continue flow.yaml --at n]',
   'record stop': 'rastro record stop [--save name|file]',
+  kill: 'rastro [-s name] kill [--force]',
   secret: 'rastro secret set <name> | rastro secret list | rastro secret rm <name>',
   'flow save': 'rastro flow save <name|file> [--from id] [--to id] [--name n]',
   'flow run': 'rastro flow run <name|file> [--from n] [--param k=v ...]',
@@ -133,7 +134,7 @@ commands:
   console, cookies, storage, tabs, eval, replay, export
   record start|stop, flow save|run|export|import
   secret set|list|rm
-  status, close, mcp
+  status, close, kill, mcp
 
 global flags:
   -s, --session <name>   session to use (default: $RASTRO_SESSION or "default")

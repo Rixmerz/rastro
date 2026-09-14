@@ -4,7 +4,7 @@
 
 import { parseArgs } from 'node:util';
 import type { ParseArgsConfig } from 'node:util';
-import { writeFileSync, chmodSync } from 'node:fs';
+import { writeFileSync, chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { RastroError } from '../core/types.ts';
 import type { RpcMethod } from '../core/types.ts';
@@ -367,6 +367,35 @@ function printResult(session: string, command: string, json: boolean, result: { 
 }
 
 /**
+ * Stops a daemon without asking it nicely. `close` goes through the same
+ * serialised queue as every other request, so it cannot reach a daemon that is
+ * wedged — which is precisely when you need it gone. This reads the pid file
+ * and signals the process directly.
+ */
+function killDaemon(session: string, force: boolean): string {
+  const paths = sessionPaths(session);
+  if (!existsSync(paths.pid)) {
+    rmSync(paths.socket, { force: true });
+    return `no daemon for ${session}`;
+  }
+  const pid = Number(readFileSync(paths.pid, 'utf8').trim());
+  if (!Number.isInteger(pid) || pid <= 1) throw new RastroError(`unreadable pid file for ${session}`, paths.pid);
+
+  try {
+    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+    // The process is already gone; the files it should have removed are not.
+    rmSync(paths.socket, { force: true });
+    rmSync(paths.pid, { force: true });
+    return `daemon ${String(pid)} was already gone; cleaned up ${session}`;
+  }
+  return force
+    ? `killed ${session} (pid ${String(pid)})`
+    : `asked ${session} (pid ${String(pid)}) to stop; --force if it does not`;
+}
+
+/**
  * The vault lives entirely in the CLI process: no daemon, no session. A stored
  * value is only ever read again inside the daemon while a flow resolves a
  * `secret:` parameter, which is why there is no plain `get` here.
@@ -438,6 +467,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'kill') {
+    try {
+      console.log(killDaemon(session, args.includes('--force')));
+    } catch (err) {
+      process.exitCode = printError(err);
+    }
+    return;
+  }
+
   if (command === 'secret') {
     try {
       runSecret(args, json);
@@ -451,14 +489,14 @@ async function main(): Promise<void> {
     const sessions = await listSessions();
     let current = sessions.find((s) => s.session === session);
     if (current === undefined) {
-      current = { session, alive: false };
+      current = { session, state: 'stopped' as const };
       sessions.push(current);
     }
     if (json) {
       console.log(JSON.stringify(sessions));
     } else {
       for (const s of sessions) {
-        console.log(`${s.session}: ${s.alive ? 'running' : 'stopped'}`);
+        console.log(`${s.session}: ${s.state}`);
       }
     }
     return;

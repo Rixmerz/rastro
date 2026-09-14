@@ -200,6 +200,21 @@ rastro export perfetto [path]   # Chrome Trace Event Format para ui.perfetto.dev
 rastro export pw-trace [path]   # Playwright trace.zip (si se abrió con --pw-trace)
 ```
 
+## Control de daemons
+
+Cada sesión tiene su daemon. `ps` lo muestra como `rastro[<sesión>]` y su pid
+está en `~/.local/share/rastro/sessions/<sesión>/daemon.pid`.
+
+```bash
+rastro status                  # running | busy | stopped, por sesión
+rastro -s mi-sesion close      # parada limpia (necesita que el daemon responda)
+rastro -s mi-sesion kill       # por señal, para un daemon atascado
+rastro -s mi-sesion kill --force
+```
+
+`busy` no es un fallo: el daemon procesa una petición a la vez, así que durante
+una navegación o un flow largo responde `busy` y sigue perfectamente vivo.
+
 ## Arquitectura
 
 ```
