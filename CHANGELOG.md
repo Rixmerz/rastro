@@ -61,6 +61,15 @@ All three came out of using Rastro against a real site, not out of the suite.
 - A download left Playwright's own artifact on disk at **0644** — a second,
   world-readable copy of the file, next to the 0600 one.
 
+### Added — the omnibox no longer goes to Google
+
+- A new profile is pointed at **DuckDuckGo**. Chromium's built-in default is
+  Google, and Google refuses automated browsers: anything typed in the address
+  bar that is not already a URL becomes a Google search and lands on a
+  reCAPTCHA that **will not validate no matter who clicks it**, a human driving
+  a recording included. It is written before launch, since Chromium rewrites
+  Preferences on exit, and a search engine the user picked later is left alone.
+
 ### Fixed — human recording never opened a window
 
 - `record start` on a session that was **already open** kept the browser

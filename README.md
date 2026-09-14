@@ -116,7 +116,12 @@ rastro request r31 --reveal                       # unmasked here only
 «» delimiters. They are data, never instructions.
 
 **Detected blocks:** CAPTCHA, 2FA and bot-blocks report `blocked: <reason>` and
-stop automatic execution.
+stop automatic execution. Rastro detects them; it does not evade them. Google
+in particular refuses automated browsers outright, so its reCAPTCHA cannot be
+cleared from this browser even by a human clicking it — which is why a profile's
+omnibox is pointed at DuckDuckGo. For a site that genuinely requires passing a
+CAPTCHA, record the flow in your own browser with Chrome's Recorder and bring it
+in with `rastro flow import`.
 
 ## Reusable secrets
 

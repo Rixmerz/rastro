@@ -1,7 +1,7 @@
 // Browser/context/page lifecycle: tabs registry, dialog policy, downloads,
 // popups, crash detection with lazy relaunch, and the write guard.
 
-import { chmodSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { SessionPaths } from '../core/paths.ts';
@@ -158,7 +158,48 @@ export class Session {
     return session;
   }
 
+  /**
+   * Points the profile's omnibox at DuckDuckGo.
+   *
+   * Chromium's built-in default is Google, and Google refuses automated
+   * browsers: anything typed in the address bar that is not already a URL
+   * becomes a Google search and lands on a reCAPTCHA that will not validate no
+   * matter who clicks it — not even a human driving a recording. DuckDuckGo
+   * serves the same browser without complaint.
+   *
+   * Written before launch, because Chromium rewrites Preferences on exit and
+   * would drop an edit made while it is running. A profile that has no
+   * Preferences yet gets this on its second launch, which is soon enough: the
+   * first one has no omnibox history to search from either.
+   */
+  private static seedSearchEngine(profile: string): void {
+    const file = join(profile, 'Default', 'Preferences');
+    if (!existsSync(file)) return;
+    try {
+      const prefs = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+      if (prefs.default_search_provider_data !== undefined) return;
+      prefs.default_search_provider_data = {
+        template_url_data: {
+          short_name: 'DuckDuckGo',
+          keyword: 'duckduckgo.com',
+          url: 'https://duckduckgo.com/?q={searchTerms}',
+          suggestions_url: 'https://duckduckgo.com/ac/?q={searchTerms}&type=list',
+          favicon_url: 'https://duckduckgo.com/favicon.ico',
+          safe_for_autoreplace: false,
+          prepopulate_id: 92,
+          synced_guid: '485bf7d3-0215-45af-87dc-538868000092',
+          id: '2',
+        },
+      };
+      writeFileSync(file, JSON.stringify(prefs), { mode: 0o600 });
+    } catch {
+      // A corrupt or unreadable Preferences file is Chromium's to rebuild;
+      // the search engine is a convenience, never a reason not to launch.
+    }
+  }
+
   private static async createContext(paths: SessionPaths, opts: SessionOptions): Promise<BrowserContext> {
+    Session.seedSearchEngine(paths.profile);
     const headed = opts.headed ?? false;
     const args = ['--disable-gpu', ...(headed && process.env.WAYLAND_DISPLAY ? ['--ozone-platform=wayland'] : [])];
     return chromium.launchPersistentContext(paths.profile, {
