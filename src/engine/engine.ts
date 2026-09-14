@@ -134,6 +134,29 @@ function headerValueOf(headers: Record<string, string>, name: string): string | 
   return undefined;
 }
 
+/**
+ * Selects an option, failing fast when the value matches none of them.
+ *
+ * `locator.selectOption` waits the whole timeout for an option that is never
+ * going to appear and then reports only that it timed out — 30 seconds and no
+ * clue, which for an agent means guessing again. Chrome's own matching is by
+ * value, label or index, so mirror that check here and name what is on offer.
+ */
+async function selectOption(locator: Locator, value: string, timeout: number): Promise<void> {
+  const options = await locator.evaluate((el: Element) =>
+    el instanceof HTMLSelectElement
+      ? Array.from(el.options, (o) => ({ value: o.value, label: o.label }))
+      : null,
+  );
+  if (options && !options.some((o) => o.value === value || o.label === value)) {
+    throw new RastroError(
+      `no option «${value}»`,
+      `available: ${options.map((o) => o.value).join(', ') || '(none)'}`,
+    );
+  }
+  await locator.selectOption(value, { timeout });
+}
+
 /** R6: pure so a timed-out quiet window is testable without a real page. */
 export function withWindowCutNote(text: string, timedOut: boolean, maxWindowMs: number): string {
   return timedOut ? `${text} · window cut at ${maxWindowMs}ms` : text;
@@ -843,7 +866,11 @@ export class EngineCore implements Engine {
             await locator.press(params.value ?? '', { timeout });
             break;
           case 'select':
-            await locator.selectOption(params.value ?? '', { timeout });
+            // Playwright waits the full timeout for an option that will never
+            // appear, then reports only that it timed out. For an agent that is
+            // 30 seconds and no idea what to try next, so check the options
+            // first and say what they are.
+            await selectOption(locator, params.value ?? '', timeout);
             break;
           case 'check':
             await locator.check({ timeout });
@@ -1105,7 +1132,12 @@ export class EngineCore implements Engine {
   async replay(rawParams: Record<string, unknown>): Promise<RpcResult> {
     const params = parse(ReplayParamsSchema, rawParams);
     if (!params.yes) {
-      return { text: `replay of ${params.id} requires --yes: it may have real effects`, data: null };
+      // An error, not a note: this exits non-zero, so a script that replays
+      // without the flag cannot mistake the refusal for a completed replay.
+      throw new RastroError(
+        `replay of ${params.id} requires --yes: it may have real effects`,
+        `rastro replay ${params.id} --yes`,
+      );
     }
     const rec = this.store.getRequest(params.id);
     if (!rec) throw new RastroError(`no request ${params.id}`);

@@ -229,7 +229,12 @@ function dispatch(command: string, argv: string[]): Dispatch {
       return { method: command, params: { reveal: bool(values.reveal) } };
     }
     case 'tabs': {
-      const { values } = sub(argv, { select: { type: 'string' }, close: { type: 'string' } });
+      const { values, positionals } = sub(argv, { select: { type: 'string' }, close: { type: 'string' } });
+      // `tabs use t2` used to list the tabs and ignore the rest without a word,
+      // so the tab never changed and nothing said why.
+      if (positionals.length > 0) {
+        throw new UsageError(`tabs takes no positional argument (got "${positionals[0]!}")\nusage: ${USAGE.tabs ?? ''}`);
+      }
       return { method: 'tabs', params: { select: str(values.select), close: str(values.close) } };
     }
     case 'eval': {

@@ -38,6 +38,17 @@ Versioned with [SemVer](https://semver.org/).
   the files it left behind.
 - `rastro status` distinguishes `running`, `busy` and `stopped` instead of lying.
 
+### Fixed — found by a full sweep of every command
+
+- `select` with a value that is not one of the options waited out the full
+  30-second timeout and then reported only that it had timed out. It now checks
+  the options first and fails in ~0.2 s naming them:
+  `no option «cl» · available: CL, AR`.
+- `replay <id>` without `--yes` printed its refusal and **exited 0**, so a script
+  could not tell the refusal from a completed replay. It is an error now.
+- `rastro tabs use t2` listed the tabs, ignored the argument and changed
+  nothing, without a word. A stray positional is rejected.
+
 ### Fixed
 
 All three came out of using Rastro against a real site, not out of the suite.

@@ -696,3 +696,45 @@ describe('GPU', () => {
     }
   }, 30000);
 });
+
+describe('select fails fast on a value that is not an option', () => {
+  test(
+    'names the available options instead of waiting out the timeout',
+    async () => {
+      const engine = await createEngine(nextSession('select-bad'));
+      try {
+        await engine.open({ url: `${server.origin}/record`, allowWrite: ['127.0.0.1'] });
+        const ref = await refByName(engine, 'País');
+
+        // Lowercase where the options are "CL"/"AR". Playwright would wait the
+        // full 30 s and then say only that it timed out.
+        const started = Date.now();
+        await expect(engine.act({ ref, kind: 'select', value: 'cl' })).rejects.toThrow(/no option/);
+        expect(Date.now() - started).toBeLessThan(5000);
+
+        // The right value still works.
+        const ok = await engine.act({ ref, kind: 'select', value: 'CL' });
+        expect(ok.text).toMatch(/^#\d+/);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    60000,
+  );
+});
+
+describe('replay refuses loudly without --yes', () => {
+  test(
+    'the refusal is an error, so a script cannot mistake it for a replay',
+    async () => {
+      const engine = await createEngine(nextSession('replay-guard'));
+      try {
+        await engine.open({ url: `${server.origin}/login`, allowWrite: ['127.0.0.1'] });
+        await expect(engine.replay({ id: 'r1' })).rejects.toThrow(/requires --yes/);
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
