@@ -43,7 +43,14 @@ against the adoption Playwright MCP already has.
 
 ## Install
 
-Requires Node.js ≥ 22.5 and a system Chromium (`/usr/bin/chromium` by default).
+```bash
+npm i -g rastro
+```
+
+Requires Node.js ≥ 22.5 and a Chromium-family browser already installed —
+Rastro drives your own browser and profile, and never downloads one of its own.
+
+From a clone, for development:
 
 ```bash
 pnpm install
@@ -52,7 +59,16 @@ pnpm link --global
 ```
 
 Optional environment variables:
-- `RASTRO_CHROMIUM` — path to Chromium (default `/usr/bin/chromium`)
+- `RASTRO_CHROMIUM` — browser binary. By default the first that exists of
+  `/usr/bin/{chromium, google-chrome-stable, google-chrome, brave,
+  brave-origin, microsoft-edge}` on Linux, or `/Applications/{Chromium, Google
+  Chrome, Brave Browser, Microsoft Edge}.app` on macOS. Point it at a real Google Chrome for sites that
+  gate on the `Google Chrome` brand — including the Web Store, which refuses to
+  install into anything else. Changing it under an existing profile is not free:
+  pair a new browser with a fresh session name.
+- `RASTRO_EXTENSIONS` — `:`-separated unpacked extension directories to load at
+  launch, for extensions a headless replay needs and nobody can click through
+  the Web Store for
 - `RASTRO_HOME` — data directory (default `~/.local/share/rastro/`)
 - `RASTRO_SESSION` — session name (default `default`)
 - `RASTRO_IDLE_MS` — quiet window in ms (default 500)
@@ -99,6 +115,11 @@ rastro request r31 --curl
 
 **Write guard:** POST/PUT/PATCH/DELETE requests to hosts outside `--allow-write`
 are aborted before they leave the browser.
+
+It guards page traffic. An extension's background service worker is a separate
+target whose requests never reach the guard, so they are neither blocked nor
+traced — the profile's extensions are trusted, and a session is only as
+trustworthy as they are.
 
 ```bash
 rastro open https://api.example.test --allow-write example.test,api.example.test
@@ -213,7 +234,12 @@ navigation or a long flow it answers `busy` and is perfectly alive.
 
 ### Install
 
+The plugin ships the skill, the agent and an MCP entry that runs `rastro mcp`,
+so **the CLI has to be on `PATH` first** — `npm i -g rastro`. Without it the
+plugin installs and every tool call fails with `rastro: command not found`.
+
 ```bash
+npm i -g rastro
 claude plugin install /path/to/rastro/plugin
 ```
 

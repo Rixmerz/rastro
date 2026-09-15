@@ -5,6 +5,63 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — published to npm, and it runs off a Mac
+
+`npm i -g rastro` is the install now. The plugin's MCP entry runs `rastro mcp`,
+so the CLI has to be on `PATH` before `claude plugin install`; both READMEs say
+so, because discovering it as `rastro: command not found` is what happened.
+
+Two things stood between the working tree and a package that runs once
+installed, and neither shows up in a repo checkout:
+
+- **`bin/rastro.js` imported `src/cli/main.ts`.** Node refuses to strip types
+  under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`) — by
+  design, so nobody ships raw TypeScript. The published package therefore
+  carries `dist/` and no `src/`, and `bin` picks whichever is present: source in
+  a clone so edits need no build, compiled once installed. `src/cli/main.ts`
+  reached for `../mcp/server.ts` with the extension hardcoded, the one path that
+  would have failed *only* for `rastro mcp`, which is to say only under the
+  plugin.
+
+- **Every browser candidate was an absolute `/usr/bin` path.** On macOS none
+  matched, `executablePath` came back undefined, and playwright-core failed with
+  `run npx playwright install` — wrong advice here, since Rastro drives your own
+  browser and profile and never downloads one. The macOS `/Applications` paths
+  are in the list, and an exhausted lookup now throws naming `$RASTRO_CHROMIUM`
+  instead of returning undefined.
+
+### Fixed — Playwright's launch defaults, inherited without reading them
+
+Three switches came from `launchPersistentContext`'s defaults rather than from
+any decision here. None of them failed a test, because each one is only visible
+to a human looking at the browser.
+
+- **Extensions work.** Playwright passes `--disable-extensions` and
+  `--disable-component-extensions-with-background-pages` on every launch, so a
+  profile's own password manager or ad blocker sat there inert and
+  `--load-extension` was ignored. Both are dropped now, headless included: a
+  flow recorded with an extension shaping the page has to replay against that
+  same page. `RASTRO_EXTENSIONS` (`:`-separated directories) loads unpacked
+  extensions at launch, for the headless case nobody can click through a store.
+  The cost is stated in the README and on the guard itself: an extension's
+  background service worker is not a page, so its requests bypass the write
+  guard entirely — unblocked and untraced.
+- **Headed sessions have scrollbars again.** A fixed `viewport` is applied via
+  `Emulation.setDeviceMetricsOverride`, which suppresses them, so a human
+  driving a recording could not scroll or see how much page was left. Headed
+  now runs on the real window (`viewport: null`); headless keeps 1280×900,
+  where screenshots need a predictable size and nothing renders a scrollbar.
+- **The sandbox is on.** `chromiumSandbox` defaults to off, which adds
+  `--no-sandbox` — a renderer escape away from a profile that holds live
+  logins.
+
+`RASTRO_CHROMIUM` now also falls back to Chrome, Brave or Edge when Chromium is
+absent, instead of dropping to Playwright's bundled browser. It stays the way to
+reach a real Google Chrome, which is the only build the Web Store will install
+into and the only one reporting a `Google Chrome` brand to sites that gate on
+it. Chromium stays first: switching engines under a live profile is what
+corrupts it.
+
 ### Fixed — the docs said nothing, so sessions got thrown away
 
 - **`open` on a live session applies `--allow-write`, `--allow-upload` and

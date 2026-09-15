@@ -525,8 +525,10 @@ async function main(): Promise<void> {
   if (command === 'mcp') {
     try {
       // Not a literal specifier: avoids a compile-time dependency on a module
-      // owned by src/engine's parallel build (src/mcp/server.ts).
-      const specifier = new URL('../mcp/server.ts', import.meta.url).href;
+      // owned by src/engine's parallel build (src/mcp/server.ts). The extension
+      // has to track this file's own: `.ts` unbuilt, `.js` once shipped.
+      const ext = import.meta.filename.endsWith('.ts') ? '.ts' : '.js';
+      const specifier = new URL(`../mcp/server${ext}`, import.meta.url).href;
       const mod = (await import(specifier)) as { runMcpServer: () => Promise<void> };
       await mod.runMcpServer();
     } catch (err) {

@@ -1,21 +1,50 @@
 {
   "name": "rastro",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Browser for AI agents: minimal view, causal event trace, on-demand detail.",
   "license": "Apache-2.0",
+  "author": {
+    "name": "Juan Pablo Diaz",
+    "email": "juanpablo516@gmail.com"
+  },
+  "homepage": "https://github.com/Rixmerz/rastro#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rixmerz/rastro.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rixmerz/rastro/issues"
+  },
+  "keywords": [
+    "browser",
+    "ai-agents",
+    "playwright",
+    "cdp",
+    "trace",
+    "mcp",
+    "automation"
+  ],
   "engines": {
     "node": ">=22.5"
   },
   "bin": {
     "rastro": "./bin/rastro.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "README.es.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

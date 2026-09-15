@@ -34,7 +34,14 @@ nuevo, frente a la adopción que ya tiene Playwright MCP.
 
 ## Instalación
 
-Requisitos: Node.js ≥ 22.5, Chromium instalado en el sistema (`/usr/bin/chromium` por defecto).
+```bash
+npm i -g rastro
+```
+
+Requisitos: Node.js ≥ 22.5 y un navegador de la familia Chromium ya instalado —
+Rastro maneja tu propio navegador y tu perfil, nunca descarga uno.
+
+Desde un clon, para desarrollo:
 
 ```bash
 pnpm install
@@ -43,7 +50,15 @@ pnpm link --global
 ```
 
 Variables de entorno (opcionales):
-- `RASTRO_CHROMIUM` — ruta a Chromium (default `/usr/bin/chromium`)
+- `RASTRO_CHROMIUM` — binario del navegador. Por defecto, el primero que exista
+  entre `/usr/bin/{chromium, google-chrome-stable, google-chrome, brave,
+  brave-origin, microsoft-edge}` en Linux, o `/Applications/{Chromium, Google
+  Chrome, Brave Browser, Microsoft Edge}.app` en macOS. Apuntarlo a un Google Chrome real para los
+  sitios que exigen la marca `Google Chrome`, entre ellos la Web Store, que no
+  instala en nada más. Cambiarlo sobre un perfil ya existente no sale gratis:
+  navegador nuevo, nombre de sesión nuevo.
+- `RASTRO_EXTENSIONS` — directorios de extensiones descomprimidas separados por
+  `:`, para las que un replay headless necesita y nadie puede instalar a mano
 - `RASTRO_HOME` — directorio de datos (default `~/.local/share/rastro/`)
 - `RASTRO_SESSION` — nombre de sesión (default `default`)
 - `RASTRO_IDLE_MS` — ventana silenciosa en ms (default 500)
@@ -89,6 +104,8 @@ rastro request r31 --curl
 ## Seguridad
 
 **Write guard:** Requests POST/PUT/PATCH/DELETE a hosts fuera de `--allow-write` se bloquean antes de salir del navegador.
+
+Cubre el tráfico de la página. El service worker de una extensión es otro target y sus requests nunca llegan al guard: no se bloquean ni quedan en la traza. Las extensiones del perfil son confianza pura, y la sesión vale lo que valgan ellas.
 
 ```bash
 rastro open https://api.example.test --allow-write example.test,api.example.test
@@ -177,6 +194,10 @@ O link global desde la ruta del repo:
 ```bash
 claude plugin install /ruta/a/rastro/plugin
 ```
+
+El plugin trae una entrada MCP que ejecuta `rastro mcp`, así que **el CLI tiene
+que estar en el `PATH` primero** (`npm i -g rastro`). Sin eso el plugin instala
+bien y cada llamada falla con `rastro: command not found`.
 
 ### Uso
 
