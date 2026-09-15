@@ -1,6 +1,9 @@
 {
-  "name": "rastro",
+  "name": "@rixmerz/rastro",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "description": "Browser for AI agents: minimal view, causal event trace, on-demand detail.",
   "license": "Apache-2.0",

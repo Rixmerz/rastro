@@ -35,7 +35,7 @@ nuevo, frente a la adopción que ya tiene Playwright MCP.
 ## Instalación
 
 ```bash
-npm i -g rastro
+npm i -g @rixmerz/rastro
 ```
 
 Requisitos: Node.js ≥ 22.5 y un navegador de la familia Chromium ya instalado —
@@ -196,7 +196,7 @@ claude plugin install /ruta/a/rastro/plugin
 ```
 
 El plugin trae una entrada MCP que ejecuta `rastro mcp`, así que **el CLI tiene
-que estar en el `PATH` primero** (`npm i -g rastro`). Sin eso el plugin instala
+que estar en el `PATH` primero** (`npm i -g @rixmerz/rastro`). Sin eso el plugin instala
 bien y cada llamada falla con `rastro: command not found`.
 
 ### Uso

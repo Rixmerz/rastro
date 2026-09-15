@@ -44,7 +44,7 @@ against the adoption Playwright MCP already has.
 ## Install
 
 ```bash
-npm i -g rastro
+npm i -g @rixmerz/rastro
 ```
 
 Requires Node.js ≥ 22.5 and a Chromium-family browser already installed —
@@ -235,11 +235,11 @@ navigation or a long flow it answers `busy` and is perfectly alive.
 ### Install
 
 The plugin ships the skill, the agent and an MCP entry that runs `rastro mcp`,
-so **the CLI has to be on `PATH` first** — `npm i -g rastro`. Without it the
+so **the CLI has to be on `PATH` first** — `npm i -g @rixmerz/rastro`. Without it the
 plugin installs and every tool call fails with `rastro: command not found`.
 
 ```bash
-npm i -g rastro
+npm i -g @rixmerz/rastro
 claude plugin install /path/to/rastro/plugin
 ```
 

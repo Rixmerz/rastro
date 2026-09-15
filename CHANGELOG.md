@@ -7,9 +7,16 @@ Versioned with [SemVer](https://semver.org/).
 
 ### Added — published to npm, and it runs off a Mac
 
-`npm i -g rastro` is the install now. The plugin's MCP entry runs `rastro mcp`,
-so the CLI has to be on `PATH` before `claude plugin install`; both READMEs say
-so, because discovering it as `rastro: command not found` is what happened.
+`npm i -g @rixmerz/rastro` is the install now. The plugin's MCP entry runs
+`rastro mcp`, so the CLI has to be on `PATH` before `claude plugin install`;
+both READMEs say so, because discovering it as `rastro: command not found` is
+what happened.
+
+The package is scoped because npm refuses the bare name: its typosquat filter
+rejects `rastro` as too close to `astro`, and a 404 on the registry means only
+that nobody holds the name, never that publishing it will be allowed. The
+binary is still `rastro`, so nothing downstream — the plugin's `.mcp.json`
+included — changes.
 
 Two things stood between the working tree and a package that runs once
 installed, and neither shows up in a repo checkout:
