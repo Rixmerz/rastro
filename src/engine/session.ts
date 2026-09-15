@@ -2,9 +2,11 @@
 // popups, crash detection with lazy relaunch, and the write guard.
 
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { SessionPaths } from '../core/paths.ts';
+import { RastroError } from '../core/types.ts';
 
 export interface TabRecord {
   id: string;
@@ -39,10 +41,67 @@ export interface SessionHooks {
   onRequestSeen?(tabId: string, method: string, url: string, resourceType: string): void;
 }
 
-function resolveExecutablePath(): string | undefined {
+/**
+ * Browsers to fall back to, in order, when `RASTRO_CHROMIUM` is unset.
+ *
+ * Chromium stays first so an existing profile keeps the binary that wrote it:
+ * switching engines under a persistent profile is what corrupts it. A real
+ * Google Chrome is worth pointing at deliberately, though — only Chrome reports
+ * a `Google Chrome` brand in `navigator.userAgentData`, so only Chrome gets
+ * past the "switch to Chrome to install extensions" wall on the Web Store and
+ * past sites that gate on that brand.
+ */
+const BROWSER_CANDIDATES = [
+  // Linux
+  '/usr/bin/chromium',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
+  '/usr/bin/brave',
+  '/usr/bin/brave-origin',
+  '/usr/bin/microsoft-edge',
+  // macOS. Not platform-gated: these simply never exist on Linux.
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+];
+
+/**
+ * Throws rather than returning undefined when nothing matches. Undefined would
+ * send playwright-core looking for its own bundled download and fail with
+ * `run npx playwright install` — advice that is wrong here, because rastro
+ * drives the user's real browser and profile, never a downloaded one.
+ */
+export function resolveExecutablePath(): string {
   const fromEnv = process.env.RASTRO_CHROMIUM;
   if (fromEnv) return fromEnv;
-  return existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined;
+  const home = homedir();
+  const found = [...BROWSER_CANDIDATES, ...BROWSER_CANDIDATES.filter((p) => p.startsWith('/Applications/')).map((p) => join(home, p))].find(
+    (path) => existsSync(path),
+  );
+  if (found) return found;
+  throw new RastroError(
+    'no Chromium-family browser found',
+    `install Chromium, Chrome, Brave or Edge, or point $RASTRO_CHROMIUM at the binary. Looked in: ${BROWSER_CANDIDATES.join(', ')}`,
+  );
+}
+
+/**
+ * Unpacked extension directories from `RASTRO_EXTENSIONS` (`:`-separated), for
+ * extensions that must be present without a human clicking through the Web
+ * Store — the only way to get one into a headless replay.
+ *
+ * Extensions the profile already has installed need nothing here; they load
+ * because we drop Playwright's `--disable-extensions` (see `createContext`).
+ */
+function extensionArgs(): string[] {
+  const raw = process.env.RASTRO_EXTENSIONS;
+  if (!raw) return [];
+  const dirs = raw
+    .split(':')
+    .map((d) => d.trim())
+    .filter((d) => d && existsSync(d));
+  return dirs.length ? [`--load-extension=${dirs.join(',')}`] : [];
 }
 
 /** Strips a single trailing dot (a trailing-dot FQDN is the same host as its
@@ -201,15 +260,47 @@ export class Session {
   private static async createContext(paths: SessionPaths, opts: SessionOptions): Promise<BrowserContext> {
     Session.seedSearchEngine(paths.profile);
     const headed = opts.headed ?? false;
-    const args = ['--disable-gpu', ...(headed && process.env.WAYLAND_DISPLAY ? ['--ozone-platform=wayland'] : [])];
+    const args = [
+      '--disable-gpu',
+      ...(headed && process.env.WAYLAND_DISPLAY ? ['--ozone-platform=wayland'] : []),
+      // Only a hint: a tiling compositor sizes the window itself.
+      ...(headed ? ['--window-size=1280,900'] : []),
+      ...extensionArgs(),
+    ];
     return chromium.launchPersistentContext(paths.profile, {
       executablePath: resolveExecutablePath(),
       headless: !headed,
       args,
+      /**
+       * Playwright turns every extension off by default. The profile here is
+       * the user's own and keeps whatever they installed in it, so those two
+       * switches mean a password manager, an ad blocker or a work extension
+       * silently does nothing — and `--load-extension` is ignored too.
+       *
+       * Dropped for headless as well as headed, on purpose: a flow recorded
+       * with an extension shaping the page has to replay against the same
+       * page, or the recorded selectors no longer match.
+       *
+       * The cost is real and lives in `installWriteGuard`: an extension's
+       * background service worker is not a page, so its requests never reach
+       * `context.route` — they are neither blocked by the allowlist nor
+       * counted in the trace.
+       */
+      ignoreDefaultArgs: ['--disable-extensions', '--disable-component-extensions-with-background-pages'],
+      // Playwright defaults this off, which adds `--no-sandbox` — a renderer
+      // escape away from a profile holding live logins. Keep the sandbox.
+      chromiumSandbox: true,
       env: browserEnv(),
       acceptDownloads: true,
       downloadsPath: paths.downloads,
-      viewport: { width: 1280, height: 900 },
+      /**
+       * `null` headed: an emulated viewport is applied through
+       * `Emulation.setDeviceMetricsOverride`, which suppresses scrollbars, so
+       * a human driving a recording cannot scroll or even see how much page is
+       * left. Headless keeps the fixed size, where nothing renders a scrollbar
+       * anyway and screenshots have to stay a predictable size.
+       */
+      viewport: headed ? null : { width: 1280, height: 900 },
     });
   }
 
@@ -446,6 +537,16 @@ export class Session {
     });
   }
 
+  /**
+   * Blocks unsafe methods to hosts outside the allowlist, for every request
+   * the context routes.
+   *
+   * Blind spot: what the context routes is page traffic. An extension's
+   * background service worker is its own target, so its requests bypass this
+   * entirely — they are not blocked and not traced. Extensions are enabled
+   * (see `createContext`), so a session is only as trustworthy as the
+   * extensions in its profile.
+   */
   private installWriteGuard(): void {
     void this.context.route('**/*', async (route) => {
       const request = route.request();

@@ -9,8 +9,41 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { Session, hostAllowed, type SessionHooks } from '../src/engine/session.ts';
+import { Session, hostAllowed, resolveExecutablePath, type SessionHooks } from '../src/engine/session.ts';
 import { ensureSessionDirs, sessionPaths, type SessionPaths } from '../src/core/paths.ts';
+import { RastroError } from '../src/core/types.ts';
+
+describe('resolveExecutablePath', () => {
+  const saved = process.env.RASTRO_CHROMIUM;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RASTRO_CHROMIUM;
+    else process.env.RASTRO_CHROMIUM = saved;
+  });
+
+  test('$RASTRO_CHROMIUM wins over every candidate, unverified', () => {
+    // Deliberately a path that does not exist: the override is the user's
+    // explicit choice, and failing later with the browser's own error beats
+    // silently falling through to a different browser than they asked for.
+    process.env.RASTRO_CHROMIUM = '/nowhere/my-chrome';
+    expect(resolveExecutablePath()).toBe('/nowhere/my-chrome');
+  });
+
+  test('a hint naming $RASTRO_CHROMIUM when nothing is installed', () => {
+    // The regression this guards is a macOS install: every candidate was an
+    // absolute /usr/bin path, so the lookup returned undefined and
+    // playwright-core failed with "run npx playwright install" — the wrong
+    // fix, since rastro drives the user's own browser and profile.
+    delete process.env.RASTRO_CHROMIUM;
+    try {
+      const found = resolveExecutablePath();
+      // On a machine that has a browser (CI, this laptop) it must be a real path.
+      expect(found.length).toBeGreaterThan(0);
+    } catch (err) {
+      expect(err).toBeInstanceOf(RastroError);
+      expect((err as RastroError).hint).toMatch(/RASTRO_CHROMIUM/);
+    }
+  });
+});
 
 describe('hostAllowed (S10)', () => {
   test('an empty allowlist entry never matches anything', () => {
@@ -255,6 +288,32 @@ describe('Session write guard on a cross-host redirect (S6)', () => {
     expect(blocked[0]?.method).toBe('POST');
     expect(blocked[0]?.host).toBe(new URL(altOrigin).hostname);
     expect(altHits).toEqual([]);
+
+    await session.close();
+    expect(rejections).toEqual([]);
+  }, 20000);
+});
+
+describe('launch switches', () => {
+  // Playwright's defaults are silent: all three shipped with the engine and
+  // failed nothing, because the symptom only ever showed up in the browser —
+  // extensions inert, no scrollbar to drag, the sandbox off under a profile
+  // holding live logins. Read them back off the browser itself.
+  test('no --disable-extensions, no --no-sandbox, and a viewport only headless', async () => {
+    const paths = makePaths();
+    const session = await Session.launch(paths, {}, noopHooks());
+    const page = session.activePage();
+
+    await page.goto('chrome://version');
+    const commandLine = await page.evaluate(() => document.querySelector('#command_line')?.textContent ?? '');
+    expect(commandLine).not.toMatch(/--disable-extensions\b/);
+    expect(commandLine).not.toMatch(/--disable-component-extensions-with-background-pages/);
+    expect(commandLine).not.toMatch(/--no-sandbox/);
+
+    // Headless keeps the fixed size so screenshots stay predictable; headed
+    // drops it, because an emulated viewport suppresses the scrollbars a
+    // human needs. Headed is not asserted here: it needs a display.
+    expect(page.viewportSize()).toEqual({ width: 1280, height: 900 });
 
     await session.close();
     expect(rejections).toEqual([]);

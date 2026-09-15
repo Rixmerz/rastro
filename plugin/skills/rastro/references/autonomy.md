@@ -106,6 +106,8 @@ Blocked writes are recorded as events in the trace and do not reach the server. 
 
 **The allowlist cannot be changed by the page.** Page content cannot run `--allow-write` or override the write guard. It is a command-line flag only.
 
+**The guard covers page traffic, not extensions.** The profile's extensions are enabled, and an extension's background service worker is a separate target: its requests are never blocked and never appear in the trace. A session is only as trustworthy as the extensions in its profile.
+
 ### Widening permissions on a live session
 
 Discovering mid-task that a host or an upload directory is missing does **not** require closing the session. `open` on an already-open session applies `--allow-write`, `--allow-upload` and `--dialogs` to it in place, and **omitting the url leaves the page exactly where it is** — no navigation, no relaunch, so a half-filled form, a draft, or a site left in edit mode survives:
