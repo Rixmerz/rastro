@@ -5,7 +5,7 @@
 // pre-resolved locator bundle from the in-page capture script instead of a
 // `ref`.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ensurePrivateDir } from '../core/paths.ts';
 import { basename } from 'node:path';
@@ -18,6 +18,8 @@ import { flowToPlaywright } from '../flow/export-playwright.ts';
 import { importChromeRecording } from '../flow/import-chrome.ts';
 import { installRastroCapture } from '../flow/capture-script.ts';
 import { runFlow, type FlowRunnerCore } from '../flow/runner.ts';
+import { contentHash, markVerified } from '../routines/state.ts';
+import { recipeFileHosts, recipePathFor } from '../link/recipe.ts';
 import type { EngineCore } from './engine.ts';
 
 const RecordStartSchema = z.object({
@@ -197,7 +199,10 @@ export class FlowController {
 
     const steps = renumberSteps([...this.continuedSteps, ...captured.steps]);
     const mergedParams = { ...(this.continuedFlow?.params ?? {}), ...(captured.params ?? {}) };
-    const flow: Flow = Object.keys(mergedParams).length > 0 ? { name, params: mergedParams, steps } : { name, steps };
+    const flow: Flow = { name, steps };
+    // Continuing a routine must not strip the manifest that makes it one.
+    if (this.continuedFlow?.tool) flow.tool = this.continuedFlow.tool;
+    if (Object.keys(mergedParams).length > 0) flow.params = mergedParams;
 
     let savedPath: string | undefined;
     if (params.save) {
@@ -356,11 +361,19 @@ export class FlowController {
 
   async flowRun(rawParams: Record<string, unknown>): Promise<RpcResult> {
     const params = parse(FlowRunSchema, rawParams);
-    const flow = parseFlow(readFileSync(params.file, 'utf8'));
+    const text = readFileSync(params.file, 'utf8');
+    const flow = parseFlow(text);
     const opts: { from?: number; params?: Record<string, string> } = {};
     if (params.from !== undefined) opts.from = params.from;
     if (params.params !== undefined) opts.params = params.params;
     const result = await runFlow({ core: this.core }, flow, opts);
+    // A whole run of these exact bytes is what a routine's probation waits
+    // for; a partial one (`--from`) proves nothing about the start.
+    if (result.ok && params.from === undefined) {
+      markVerified(contentHash(text), params.file);
+      const recipeFile = recipePathFor(params.file);
+      if (existsSync(recipeFile)) await this.core.exportCookieJar(recipeFileHosts(recipeFile));
+    }
     return { text: result.lines.join('\n'), data: result };
   }
 

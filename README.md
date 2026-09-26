@@ -215,6 +215,104 @@ What a flow deliberately does **not** capture is judgment. Where a file belongs
 inside a site varies per upload, so the agent looks at the page with `view`,
 decides, and runs the flow for the mechanical part.
 
+## Routines: flows as agent tools
+
+A flow becomes a **routine** when it carries a `tool:` block. An agent then
+calls it like any tool, with typed parameters, instead of driving the browser
+step by step or composing a `flow run` command line.
+
+```yaml
+name: publish-file
+tool:
+  description: Publish a local file as a resource in a course section
+  effect: write              # read | write | destructive
+  session: school            # optional: the daemon session it runs in
+  allowWrite: [lms.example.edu]
+  allowUpload: [~/Documents]
+  login: login-school        # optional: run once when a login page shows up
+  loginWhen: { url: /login/* }
+params:
+  course:  { type: integer, description: numeric course id, example: 12345 }
+  section: { type: integer, description: section number }
+  file:    { type: path, description: local file to publish }
+steps: ...
+```
+
+```bash
+rastro routine list                   # routines, verified or not, link state, lint warnings
+rastro routine show publish-file      # what an agent sees, plus the last run
+rastro routine run publish-file --param course=12345 --param section=1 --param file=~/Documents/a.pdf
+```
+
+What keeps this from going wrong:
+
+- **Opt-in.** Only flows with a `tool:` block are routines, named after the
+  file. Raw recordings stay plain flows.
+- **Probation.** A routine gets its own MCP tool only after the exact bytes of
+  its file completed a run. Editing it puts it back on probation. Until then
+  `rastro_routine_run` can still run it.
+- **Scoped permissions.** The run uses the routine's `allowWrite` and
+  `allowUpload` and puts the session's own lists back afterwards, also on
+  failure. Keyring parameters (`from: secret:...`) are never part of the
+  tool's input.
+- **No duplicate writes.** A login page (`loginWhen`) triggers the `login` flow
+  and **one** rerun, only if nothing was written yet. The result lists the
+  writes sent and says whether a retry is safe. A client timeout answers that
+  the routine may still be running, not that it failed.
+- **A bad file never takes the server down.** It loses its tool and shows up
+  in `rastro_routines` with the error.
+
+`rastro mcp` exposes `rastro_routines` and `rastro_routine_run` always, and one
+tool per verified routine, updated live as files change
+(`notifications/tools/list_changed`). `rastro mcp --routines-only` gives an
+agent nothing but vetted routines; `--routines=catalog` keeps just the two
+stable tools; `--routines=off` removes them.
+
+Routines are read from `./.rastro/flows/` (when it exists) **and**
+`~/.config/rastro/flows/`, project first, with collisions reported, or from
+`RASTRO_FLOWS` (colon-separated).
+
+## Linking a flow to its HTTP calls
+
+`rastro flow link` turns a routine into plain HTTP requests, so it runs without
+Chromium: one Node process sending a handful of requests instead of a browser.
+
+```bash
+rastro flow link publish-file --param course=12345 --param section=1 --param file=~/Documents/a.pdf
+# linked 4 requests (2 writes) from actions #41-#49
+# extracted per run: sesskey, itemid
+# saved to ~/.config/rastro/flows/publish-file.link.yaml
+rastro routine run publish-file --engine http ...   # first HTTP run verifies the recipe
+```
+
+**The link runs the flow once for real**, in the browser, with its real
+effects, and compiles the requests that run caused. Pass `--from`/`--to` to
+compile an earlier good run instead.
+
+Values that change on every run (a CSRF token, a draft id) are traced to the
+response that handed them out and become extraction rules, checked against the
+recorded response. Parameters are bound back to `{{param}}`. A double-submit
+token is read from the cookie jar at run time. What cannot be traced and looks
+like a token is listed as a warning.
+
+- **The recipe holds no credential.** No cookie, token or secret value; the
+  link aborts before writing if one would end up in the file.
+- **`auto` (the default) uses HTTP only when the recipe is fresh and
+  verified**, and falls back to the browser **only while no write has been
+  sent**. After a write, it stops and reports what was sent.
+- **A changed flow stales its recipe.** Link it again. Hand-editing the
+  recipe (to fix a warning) un-verifies it until another `--engine http` run.
+- The HTTP runner reads cookies from
+  `~/.local/share/rastro/sessions/<session>/cookies.json` (mode 0600). It is
+  written only for flows that have a recipe, and holds **only the cookies of
+  the hosts that recipe talks to**, not the rest of the browser profile.
+
+**Not linkable, by design:** requests signed by page JavaScript, WebSockets,
+short-lived bearer tokens minted in the browser, and uploads whose body the
+browser does not expose. Those routines keep running in the browser. A
+Playwright script cannot be linked directly: the input is a Rastro run, not
+source code.
+
 ## Daemon control
 
 Every session has its own daemon. `ps` shows it as `rastro[<session>]` and its

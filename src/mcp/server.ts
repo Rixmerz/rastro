@@ -2,17 +2,39 @@
 // agents that speak MCP instead of the CLI.
 
 import { extname, basename, join } from 'node:path';
-import { writeFileSync, chmodSync } from 'node:fs';
+import { writeFileSync, chmodSync, watch, type FSWatcher } from 'node:fs';
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { call } from '../daemon/client.ts';
 import { RastroError } from '../core/types.ts';
+import { VERSION } from '../version.ts';
 import type { RpcMethod, RpcResult } from '../core/types.ts';
-import { ensurePrivateDir, sessionPaths } from '../core/paths.ts';
+import { ensurePrivateDir, routineDirs, routinesStateDir, sessionPaths } from '../core/paths.ts';
+import type { FlowParam, ToolManifest } from '../flow/format.ts';
+import { describeLink, loadRoutines, type Routine, type RoutineCatalog } from '../routines/registry.ts';
+import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
+import { isCallerParam, isRequired, validateRoutineParams } from '../routines/params.ts';
 
-type CallFn = (session: string, method: RpcMethod, params: Record<string, unknown>) => Promise<RpcResult>;
+type CallFn = (
+  session: string,
+  method: RpcMethod,
+  params: Record<string, unknown>,
+  opts?: { timeoutMs?: number },
+) => Promise<RpcResult>;
+
+/** `tools`: the two stable routine tools plus one per verified routine.
+ * `catalog`: only the stable two. `off`: none. */
+export type RoutineExposure = 'tools' | 'catalog' | 'off';
+
+export interface McpServerOptions {
+  routines?: RoutineExposure;
+  /** Expose nothing but the routine tools: an agent that may only run vetted routines. */
+  routinesOnly?: boolean;
+  /** Routine directories; `routineDirs()` by default. */
+  dirs?: string[];
+}
 
 const MAX_INLINE_BYTES = 4096;
 
@@ -93,8 +115,43 @@ function errorResult(err: unknown): CallToolResult {
   return { content: [{ type: 'text', text: `error: ${message}` }], isError: true };
 }
 
-export function createMcpServer(callFn: CallFn = call, defaultSession = process.env.RASTRO_SESSION ?? 'default'): McpServer {
-  const server = new McpServer({ name: 'rastro', version: '0.1.0' });
+/**
+ * What every connected agent reads in its system prompt, whether or not it
+ * ever loads the skill: the one habit that matters is checking for a routine
+ * before browsing, and never rerunning one that already wrote something.
+ */
+export function serverInstructions(exposure: RoutineExposure, routinesOnly: boolean): string {
+  const routines =
+    'Saved routines do whole site tasks (publish a file, create an assignment...) from typed params. ' +
+    'Before browsing a site, call rastro_routines; if one covers the task, run it (its own tool, or rastro_routine_run) instead of navigating. ' +
+    'Some replay over plain HTTP without a browser. ' +
+    'Read its result: "retry is safe" means nothing was written; "a write was sent: do NOT retry" or "still running" means check the site or rastro_history before any new attempt.';
+  const browser =
+    'For anything no routine covers: rastro_open (with allowWrite for hosts that must receive writes), rastro_view, rastro_act; ' +
+    'each action returns a one-line effect summary, and rastro_effects / rastro_trace / rastro_request dig into what it caused.';
+  if (exposure === 'off') return browser;
+  if (routinesOnly) return `${routines} This server exposes routines only.`;
+  return `${routines} ${browser}`;
+}
+
+const controllers = new WeakMap<McpServer, RoutineTools>();
+
+/** The routine-tool controller of a server built by `createMcpServer`, if any. */
+export function routineToolsOf(server: McpServer): RoutineTools | undefined {
+  return controllers.get(server);
+}
+
+export function createMcpServer(
+  callFn: CallFn = call,
+  defaultSession = process.env.RASTRO_SESSION ?? 'default',
+  opts: McpServerOptions = {},
+): McpServer {
+  const exposure: RoutineExposure = opts.routinesOnly && opts.routines === 'off' ? 'catalog' : (opts.routines ?? 'tools');
+  const server = new McpServer({ name: 'rastro', version: VERSION }, { instructions: serverInstructions(exposure, opts.routinesOnly === true) });
+  if (exposure !== 'off') {
+    controllers.set(server, new RoutineTools(server, callFn, defaultSession, exposure, opts.dirs));
+  }
+  if (opts.routinesOnly) return server;
 
   function register(
     name: string,
@@ -206,7 +263,264 @@ export function createMcpServer(callFn: CallFn = call, defaultSession = process.
   return server;
 }
 
-export async function runMcpServer(opts?: { session?: string }): Promise<void> {
-  const server = createMcpServer(call, opts?.session ?? process.env.RASTRO_SESSION ?? 'default');
+// ---------------------------------------------------------------------------
+// Routine tools.
+// ---------------------------------------------------------------------------
+
+/** How long a routine may run before the client stops waiting. Long on
+ * purpose: a timeout does not stop the daemon, and an agent that reads it as a
+ * failure and retries duplicates whatever the routine writes. */
+function routineTimeoutMs(): number {
+  return Number(process.env.RASTRO_ROUTINE_TIMEOUT_MS) || 15 * 60_000;
+}
+
+const RELOAD_DEBOUNCE_MS = 250;
+
+function paramSchema(def: FlowParam): z.ZodTypeAny {
+  let schema: z.ZodTypeAny;
+  if (def.enum) {
+    schema = z.enum(def.enum as [string, ...string[]]);
+  } else {
+    switch (def.type ?? 'string') {
+      case 'integer':
+        schema = z.number().int();
+        break;
+      case 'number':
+        schema = z.number();
+        break;
+      case 'boolean':
+        schema = z.boolean();
+        break;
+      case 'url':
+        schema = z.string().url();
+        break;
+      case 'path':
+        schema = z.string().describe('absolute path');
+        break;
+      default:
+        schema = z.string();
+    }
+  }
+  const hints = [def.description, def.type === 'path' ? 'absolute path' : undefined, def.example !== undefined ? `e.g. ${String(def.example)}` : undefined]
+    .filter((h): h is string => h !== undefined && h.length > 0);
+  if (hints.length > 0) schema = schema.describe(hints.join('; '));
+  return isRequired(def) ? schema : schema.optional();
+}
+
+/** The input shape of a routine's own tool. Keyring parameters are left out:
+ * the agent can neither see nor override what the routine resolves itself. */
+export function routineInputShape(routine: Routine): Record<string, z.ZodTypeAny> {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [name, def] of Object.entries(routine.flow.params ?? {})) {
+    if (isCallerParam(def)) shape[name] = paramSchema(def);
+  }
+  return shape;
+}
+
+function annotationsFor(tool: ToolManifest): { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean } {
+  return {
+    readOnlyHint: tool.effect === 'read',
+    destructiveHint: tool.effect === 'destructive',
+    idempotentHint: tool.effect === 'read',
+    openWorldHint: true,
+  };
+}
+
+function describeParam(name: string, def: FlowParam): string {
+  const type = def.enum ? def.enum.join('|') : (def.type ?? 'string');
+  return `${name}:${type}${isRequired(def) ? '' : '?'}`;
+}
+
+export function formatCatalog(catalog: RoutineCatalog): string {
+  const lines: string[] = [];
+  for (const r of catalog.routines) {
+    const params = Object.entries(r.flow.params ?? {})
+      .filter(([, def]) => isCallerParam(def))
+      .map(([name, def]) => describeParam(name, def));
+    const link = describeLink(r.link);
+    lines.push(`${r.name} · ${r.tool.effect} · ${r.verified ? 'verified' : 'unverified'}${link ? ` · ${link}` : ''} — ${r.tool.description}`);
+    if (params.length > 0) lines.push(`  params: ${params.join(', ')}`);
+    for (const w of r.warnings) lines.push(`  warning: ${w}`);
+  }
+  if (catalog.routines.length === 0) lines.push('no routines (a flow becomes one with a tool: block)');
+  for (const p of catalog.problems) lines.push(`problem: ${p.name} (${p.file}): ${p.error}`);
+  for (const s of catalog.shadowed) lines.push(`shadowed: ${s.file} by ${s.by}`);
+  return lines.join('\n');
+}
+
+function isTimeout(err: unknown): boolean {
+  return err instanceof Error && !(err instanceof RastroError) && /^timed out waiting for/.test(err.message);
+}
+
+/**
+ * Owns the routine tools of one server: the stable catalog/run pair, and one
+ * tool per verified routine kept in step with the files on disk. Every change
+ * goes through `reload`, which never throws: a bad file loses its tool and
+ * shows up in the catalog instead.
+ */
+export class RoutineTools {
+  private readonly server: McpServer;
+  private readonly callFn: CallFn;
+  private readonly defaultSession: string;
+  private readonly exposure: RoutineExposure;
+  private readonly dirs: string[] | undefined;
+  private readonly live = new Map<string, { tool: RegisteredTool; hash: string }>();
+  private watchers: FSWatcher[] = [];
+  private timer: NodeJS.Timeout | undefined;
+
+  constructor(server: McpServer, callFn: CallFn, defaultSession: string, exposure: RoutineExposure, dirs?: string[]) {
+    this.server = server;
+    this.callFn = callFn;
+    this.defaultSession = defaultSession;
+    this.exposure = exposure;
+    this.dirs = dirs;
+    this.registerStable();
+    this.reload();
+  }
+
+  private catalog(): RoutineCatalog {
+    return loadRoutines(this.dirs ?? routineDirs());
+  }
+
+  private registerStable(): void {
+    this.server.registerTool(
+      'rastro_routines',
+      {
+        description: 'Lists saved routines: what each does, its params, whether it is verified, and any problem.',
+        inputSchema: {},
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      () => {
+        try {
+          return { content: [{ type: 'text', text: formatCatalog(this.catalog()) }] };
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
+    );
+    this.server.registerTool(
+      'rastro_routine_run',
+      {
+        description: 'Runs a saved routine by name with its params, verified or not. See rastro_routines.',
+        inputSchema: {
+          name: z.string(),
+          params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+          engine: z.enum(['auto', 'browser', 'http']).optional().describe('auto (default) replays over http only when the routine has a verified recipe'),
+          session: sessionField,
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      },
+      async (args) => {
+        const input = args as { name: string; params?: Record<string, unknown>; session?: string; engine?: EngineChoice };
+        const routine = this.catalog().routines.find((r) => r.name === input.name);
+        if (!routine) {
+          const catalog = this.catalog();
+          const problem = catalog.problems.find((p) => p.name === input.name);
+          const text = problem
+            ? `error: routine ${input.name} is unusable: ${problem.error}`
+            : `error: no routine ${input.name}\nhint: list them with rastro_routines`;
+          return { content: [{ type: 'text', text }], isError: true };
+        }
+        return this.run(routine, input.params ?? {}, input.session, input.engine);
+      },
+    );
+  }
+
+  private async run(routine: Routine, params: Record<string, unknown>, session?: string, engine: EngineChoice = 'auto'): Promise<CallToolResult> {
+    const target = session ?? routine.tool.session ?? this.defaultSession;
+    try {
+      // Validate here too, so a bad value fails before a daemon (and a
+      // browser) is started for nothing.
+      validateRoutineParams(routine.flow, params);
+      const result = await dispatchRoutine(routine, params, target, { engine, callFn: this.callFn, timeoutMs: routineTimeoutMs() });
+      const data = result.data as { ok?: boolean } | null;
+      return { content: buildContent(target, routine.name, result), isError: data?.ok === false };
+    } catch (err) {
+      if (isTimeout(err)) {
+        const text = `routine ${routine.name} is still running in session ${target} or its outcome is unknown.\n` +
+          'Do NOT run it again: check rastro_history to see how it ended.';
+        return { content: [{ type: 'text', text }], isError: true };
+      }
+      return errorResult(err);
+    } finally {
+      // A first good run is what promotes a routine to its own tool.
+      this.reload();
+    }
+  }
+
+  /** Brings the per-routine tools in line with the files. Never throws. */
+  reload(): void {
+    if (this.exposure !== 'tools') return;
+    let desired: Routine[];
+    try {
+      desired = this.catalog().routines.filter((r) => r.verified);
+    } catch {
+      desired = [];
+    }
+    const wanted = new Map(desired.map((r) => [r.name, r]));
+
+    for (const [name, entry] of this.live) {
+      const next = wanted.get(name);
+      if (next === undefined || next.hash !== entry.hash) {
+        entry.tool.remove();
+        this.live.delete(name);
+      }
+    }
+    for (const routine of desired) {
+      if (this.live.has(routine.name)) continue;
+      try {
+        const tool = this.server.registerTool(
+          routine.name,
+          {
+            description: routine.tool.description,
+            inputSchema: routineInputShape(routine),
+            annotations: annotationsFor(routine.tool),
+          },
+          // Re-read at call time: linking or verifying a recipe does not change
+          // the flow's hash, so the routine captured here would never learn
+          // about it and would run in the browser forever.
+          (args) => this.run(this.catalog().routines.find((r) => r.name === routine.name) ?? routine, args as Record<string, unknown>),
+        );
+        this.live.set(routine.name, { tool, hash: routine.hash });
+      } catch {
+        // A schema the SDK rejects (a malformed enum, say) leaves the routine
+        // reachable through rastro_routine_run, which reports the problem.
+      }
+    }
+  }
+
+  /** Current per-routine tool names, for tests and diagnostics. */
+  liveTools(): string[] {
+    return [...this.live.keys()].sort();
+  }
+
+  /** Watches the routine directories and the verification markers. */
+  watch(): void {
+    const verified = join(routinesStateDir(), 'verified');
+    ensurePrivateDir(verified);
+    for (const dir of [...(this.dirs ?? routineDirs()), verified]) {
+      try {
+        this.watchers.push(watch(dir, () => this.schedule()));
+      } catch {
+        // A directory that does not exist yet simply has nothing to watch.
+      }
+    }
+  }
+
+  private schedule(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.reload(), RELOAD_DEBOUNCE_MS);
+  }
+
+  close(): void {
+    if (this.timer) clearTimeout(this.timer);
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
+  }
+}
+
+export async function runMcpServer(opts?: { session?: string } & McpServerOptions): Promise<void> {
+  const server = createMcpServer(call, opts?.session ?? process.env.RASTRO_SESSION ?? 'default', opts ?? {});
   await server.connect(new StdioServerTransport());
+  routineToolsOf(server)?.watch();
 }

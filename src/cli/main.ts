@@ -10,6 +10,9 @@ import { RastroError } from '../core/types.ts';
 import type { RpcMethod } from '../core/types.ts';
 import { call, listSessions } from '../daemon/client.ts';
 import { ensurePrivateDir, resolveFlowRef, sessionPaths } from '../core/paths.ts';
+import { describeLink, findRoutine, loadRoutines } from '../routines/registry.ts';
+import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
+import { lastRun } from '../routines/state.ts';
 import { secretGet, secretList, secretRemove, secretSet } from '../security/vault.ts';
 import { readSecretInteractively } from './prompt.ts';
 import {
@@ -317,6 +320,31 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
       },
     };
   }
+  if (sub_ === 'link') {
+    const { values, positionals } = sub(argv, {
+      param: { type: 'string', multiple: true },
+      from: { type: 'string' },
+      to: { type: 'string' },
+    });
+    const ref = requirePositional(positionals, 0, 'file', USAGE['flow link'] ?? '');
+    // A bare name links the routine `routine run` would run, so the recipe
+    // lands next to the file that will use it (routine dirs, RASTRO_FLOWS).
+    let file: string;
+    try {
+      file = ref.includes('/') || /\.ya?ml$/i.test(ref) ? resolveFlowRef(ref) : findRoutine(ref).file;
+    } catch {
+      file = resolveFlowRef(ref);
+    }
+    return {
+      method: 'flowLink',
+      params: {
+        file: resolvePath(file),
+        params: parseKeyValues(list(values.param), '--param'),
+        from: toNumber(str(values.from), '--from'),
+        to: toNumber(str(values.to), '--to'),
+      },
+    };
+  }
   if (sub_ === 'export') {
     const { values, positionals } = sub(argv, { out: { type: 'string' }, playwright: { type: 'boolean' } });
     const file = requirePositional(positionals, 0, 'file', USAGE['flow export'] ?? '');
@@ -333,6 +361,60 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
     return { method: 'flowImport', params: { file: resolvePath(file), out: resolvePath(out) } };
   }
   throw new UsageError(`unknown "flow ${sub_}"`);
+}
+
+/** Whether the user named a session, as opposed to getting the default. A
+ * routine's own `session:` only yields to an explicit choice. */
+function sessionIsExplicit(argv: string[]): boolean {
+  return argv.includes('-s') || argv.includes('--session') || process.env.RASTRO_SESSION !== undefined;
+}
+
+function showRoutine(name: string, json: boolean): void {
+  const routine = findRoutine(name);
+  const run = lastRun(routine.name);
+  if (json) {
+    console.log(JSON.stringify({ ...routine, lastRun: run ?? null }));
+    return;
+  }
+  const lines = [
+    `${routine.name} · ${routine.tool.effect} · ${routine.verified ? 'verified' : 'unverified'}`,
+    routine.tool.description,
+    `file: ${routine.file}`,
+  ];
+  if (routine.tool.session) lines.push(`session: ${routine.tool.session}`);
+  if (routine.tool.allowWrite) lines.push(`allow write: ${routine.tool.allowWrite.join(', ')}`);
+  if (routine.tool.allowUpload) lines.push(`allow upload: ${routine.tool.allowUpload.join(', ')}`);
+  if (routine.tool.login) lines.push(`login: ${routine.tool.login}`);
+  const link = describeLink(routine.link);
+  if (link) lines.push(`${link} (${routine.link!.file})`);
+  for (const w of routine.link?.recipe?.warnings ?? []) lines.push(`link warning: ${w}`);
+  for (const [param, def] of Object.entries(routine.flow.params ?? {})) {
+    const source = def.from !== undefined ? ` (from ${def.from}, not supplied by the caller)` : '';
+    const type = def.enum ? def.enum.join('|') : (def.type ?? 'string');
+    const optional = def.default !== undefined ? ` = ${def.default}` : '';
+    lines.push(`param ${param}: ${type}${optional}${source}${def.description ? ` — ${def.description}` : ''}`);
+  }
+  for (const w of routine.warnings) lines.push(`warning: ${w}`);
+  if (run) lines.push(`last run: ${run.at} ${run.ok ? 'ok' : `failed (${run.reason ?? ''})`} via ${run.engine}`);
+  console.log(lines.join('\n'));
+}
+
+function listRoutines(json: boolean): void {
+  const catalog = loadRoutines();
+  if (json) {
+    console.log(JSON.stringify(catalog));
+    return;
+  }
+  const lines: string[] = [];
+  for (const r of catalog.routines) {
+    const link = describeLink(r.link);
+    lines.push(`${r.name}  ${r.tool.effect}  ${r.verified ? 'verified' : 'unverified'}${link ? `  ${link}` : ''}  ${r.tool.description}`);
+    for (const w of r.warnings) lines.push(`  warning: ${w}`);
+  }
+  if (catalog.routines.length === 0) lines.push('no routines (a flow becomes one with a tool: block)');
+  for (const p of catalog.problems) lines.push(`problem: ${p.name} (${p.file}): ${p.error}`);
+  for (const s of catalog.shadowed) lines.push(`shadowed: ${s.file} by ${s.by}`);
+  console.log(lines.join('\n'));
 }
 
 function printError(err: unknown): number {
@@ -466,7 +548,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if ((command === 'record' || command === 'flow') && (args[0] === undefined || args.includes('-h') || args.includes('--help'))) {
+  if ((command === 'record' || command === 'flow' || command === 'routine') && (args[0] === undefined || args.includes('-h') || args.includes('--help'))) {
     const key = args[0] === undefined ? command : `${command} ${args[0]}`;
     console.log(`usage: ${USAGE[key] ?? TOP_LEVEL_HELP}`);
     return;
@@ -522,15 +604,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'routine' && (args[0] === 'list' || args[0] === 'show')) {
+    try {
+      if (args[0] === 'list') listRoutines(json);
+      else showRoutine(requirePositional(args, 1, 'name', USAGE['routine show'] ?? ''), json);
+    } catch (err) {
+      process.exitCode = printError(err);
+    }
+    return;
+  }
+
   if (command === 'mcp') {
+    let routines: string | undefined;
+    let routinesOnly: boolean | undefined;
+    try {
+      const { values } = sub(args, { routines: { type: 'string' }, 'routines-only': { type: 'boolean' } });
+      routines = str(values.routines);
+      routinesOnly = bool(values['routines-only']);
+      if (routines !== undefined && routines !== 'tools' && routines !== 'catalog' && routines !== 'off') {
+        throw new UsageError(`--routines expects tools, catalog or off, got "${routines}"`);
+      }
+    } catch (err) {
+      process.exitCode = printError(err);
+      return;
+    }
     try {
       // Not a literal specifier: avoids a compile-time dependency on a module
       // owned by src/engine's parallel build (src/mcp/server.ts). The extension
       // has to track this file's own: `.ts` unbuilt, `.js` once shipped.
       const ext = import.meta.filename.endsWith('.ts') ? '.ts' : '.js';
       const specifier = new URL(`../mcp/server${ext}`, import.meta.url).href;
-      const mod = (await import(specifier)) as { runMcpServer: () => Promise<void> };
-      await mod.runMcpServer();
+      const mod = (await import(specifier)) as {
+        runMcpServer: (opts: { routines?: 'tools' | 'catalog' | 'off'; routinesOnly?: boolean }) => Promise<void>;
+      };
+      const opts: { routines?: 'tools' | 'catalog' | 'off'; routinesOnly?: boolean } = {};
+      if (routines !== undefined) opts.routines = routines as 'tools' | 'catalog' | 'off';
+      if (routinesOnly) opts.routinesOnly = true;
+      await mod.runMcpServer(opts);
     } catch (err) {
       console.error(`error: mcp server unavailable: ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
@@ -546,6 +656,24 @@ async function main(): Promise<void> {
     } else if (command === 'flow') {
       const [sub_, ...subArgs] = args;
       target = dispatchFlow(sub_ ?? '', subArgs);
+    } else if (command === 'routine') {
+      const [sub_, ...subArgs] = args;
+      if (sub_ !== 'run') throw new UsageError(`unknown "routine ${sub_ ?? ''}"\nusage: ${USAGE.routine}`);
+      const { values, positionals } = sub(subArgs, { param: { type: 'string', multiple: true }, engine: { type: 'string' } });
+      const engine = str(values.engine) ?? 'auto';
+      if (engine !== 'auto' && engine !== 'browser' && engine !== 'http') {
+        throw new UsageError(`--engine expects auto, browser or http, got "${engine}"`);
+      }
+      const routine = findRoutine(requirePositional(positionals, 0, 'name', USAGE['routine run'] ?? ''));
+      const runSession = sessionIsExplicit(argv) ? session : (routine.tool.session ?? session);
+      const result = await dispatchRoutine(routine, parseKeyValues(list(values.param), '--param') ?? {}, runSession, {
+        engine: engine as EngineChoice,
+        callFn: call,
+        timeoutMs: Number(process.env.RASTRO_ROUTINE_TIMEOUT_MS) || 15 * 60_000,
+      });
+      printResult(runSession, command, json, result);
+      if ((result.data as { ok?: boolean } | null)?.ok === false) process.exitCode = 1;
+      return;
     } else {
       target = dispatch(command, args);
     }

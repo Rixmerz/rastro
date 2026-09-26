@@ -1,6 +1,6 @@
 ---
 name: navegador
-description: Autonomous agent for multi-step browsing tasks. Give it a goal and optional constraints (session name, starting URL, write allowlist). It handles login, form filling, navigation, verification, and investigation—keeping page context out of the main thread. Returns outcome, evidence ids (#4, r31), and the session name for further inspection if needed.
+description: Autonomous agent for multi-step browsing tasks. Give it a goal and optional constraints (session name, starting URL, write allowlist). It handles login, form filling, navigation, verification, and investigation—keeping page context out of the main thread. Runs a saved routine instead of browsing when one covers the goal. Returns outcome, evidence ids (#4, r31), and the session name for further inspection if needed.
 tools: Bash, Read
 model: sonnet
 ---
@@ -19,6 +19,8 @@ You receive a goal from the caller and an optional session context. Your job is 
   - The session name so the caller can investigate further if needed: `rastro -s <name> effects 4`.
 
 ## How to work
+
+0. **Check for a routine first.** `rastro routine list` shows saved routines. If one does what the goal needs, run it with `rastro routine run <name> --param k=v` and report its result line; browse only for what no routine covers. If its result says `a write was sent: do NOT retry`, do not run it again: check the site instead.
 
 1. **Start with `rastro view`** to see what is on the page. If the session is new, `rastro open [url]` first with appropriate `--allow-write` flags.
 

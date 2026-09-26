@@ -39,6 +39,13 @@ export interface SessionHooks {
    * traffic. Optional: callers that don't need it aren't forced to wire it.
    */
   onRequestSeen?(tabId: string, method: string, url: string, resourceType: string): void;
+  /**
+   * The body of an allowed write, as the router saw it. CDP's Network domain
+   * leaves some bodies out — a multipart form posted into an iframe (how
+   * Moodle uploads a file) has none there, and `getRequestPostData` cannot find
+   * it — but the router gets the full structure.
+   */
+  onWriteBody?(method: string, url: string, body: string): void;
 }
 
 /**
@@ -574,6 +581,8 @@ export class Session {
       }
 
       if (hostAllowed(host, this.allowWrite)) {
+        const body = request.postData();
+        if (body !== null) this.safeHook(() => this.hooks.onWriteBody?.(method, request.url(), body));
         await route.continue();
         return;
       }

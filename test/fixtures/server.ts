@@ -9,6 +9,8 @@ export interface FixtureServer {
   close(): Promise<void>;
   hits(): { method: string; path: string; t: number }[];
   resetHits(): void;
+  /** Notes created through the routine fixture (`/rt/*`), in order. */
+  notes(): { id: number; title: string }[];
 }
 
 export interface ExpectedRequest {
@@ -287,6 +289,31 @@ function recordDonePage(): string {
   return page('Listo', '<main><h1>Listo</h1></main>');
 }
 
+// Routine fixture: a form behind a cookie login, carrying a per-render CSRF
+// token the post must echo back. Exercises login refresh, write tracking and
+// (for flow link) extracting a value from one response into the next request.
+function rtLoginPage(): string {
+  return page(
+    'Entrar',
+    `<main><h1>Entrar</h1>
+<form method="post" action="/rt/login"><button type="submit">Entrar</button></form>
+</main>`,
+  );
+}
+
+function rtFormPage(csrf: string): string {
+  return page(
+    'Nueva nota',
+    `<main><h1>Nueva nota</h1>
+<form method="post" action="/rt/note">
+<input type="hidden" name="csrf" value="${csrf}">
+<label>Título <input name="title" type="text"></label>
+<button type="submit">Guardar</button>
+</form>
+</main>`,
+  );
+}
+
 function simplePage(title: string): string {
   return page(title, `<main><h1>${title}</h1></main>`);
 }
@@ -307,6 +334,9 @@ export function startFixtureServer(): Promise<FixtureServer> {
     const sseIntervals = new Set<NodeJS.Timeout>();
 
     let altOrigin = '';
+    const notes: { id: number; title: string }[] = [];
+    const issuedCsrf = new Set<string>();
+    let csrfSeq = 0;
 
     const server: Server = createServer((req, res) => {
       res.setHeader('Cache-Control', 'no-store');
@@ -421,6 +451,62 @@ export function startFixtureServer(): Promise<FixtureServer> {
       }
       if (method === 'GET' && p === '/api/ping') return sendJson(res, { ok: true });
 
+      // Moodle's file picker uploads by posting a multipart form into an
+      // iframe: CDP reports no body for that request at all.
+      if (method === 'GET' && p === '/iframe-upload') {
+        return sendHtml(
+          res,
+          page(
+            'Subir',
+            `<iframe name="sink" title="sink"></iframe>
+<form target="sink" method="post" enctype="multipart/form-data" action="/iframe-upload">
+<input name="title" value="hola"><input type="file" id="f" name="repo_upload_file"><button id="b">Subir</button>
+</form>`,
+          ),
+        );
+      }
+      if (method === 'POST' && p === '/iframe-upload') {
+        await readBody(req);
+        return sendJson(res, { ok: true });
+      }
+
+      if (p.startsWith('/rt/')) {
+        const authed = /(?:^|;\s*)rt_auth=1(?:;|$)/.test(req.headers.cookie ?? '');
+        if (method === 'GET' && p === '/rt/login') return sendHtml(res, rtLoginPage());
+        if (method === 'POST' && p === '/rt/login') {
+          await readBody(req);
+          res.writeHead(302, { location: '/rt/form', 'set-cookie': 'rt_auth=1; Path=/' });
+          res.end();
+          return;
+        }
+        if (!authed) {
+          res.writeHead(302, { location: '/rt/login' });
+          res.end();
+          return;
+        }
+        if (method === 'GET' && p === '/rt/form') {
+          csrfSeq += 1;
+          const csrf = `c${csrfSeq}x${Math.random().toString(36).slice(2, 12)}`;
+          issuedCsrf.add(csrf);
+          return sendHtml(res, rtFormPage(csrf));
+        }
+        if (method === 'POST' && p === '/rt/note') {
+          const form = new URLSearchParams(await readBody(req));
+          const csrf = form.get('csrf') ?? '';
+          if (!issuedCsrf.delete(csrf)) return sendHtml(res, simplePage('CSRF inválido'), 403);
+          const note = { id: notes.length + 1, title: form.get('title') ?? '' };
+          notes.push(note);
+          res.writeHead(303, { location: `/rt/notes/${note.id}` });
+          res.end();
+          return;
+        }
+        const noteMatch = /^\/rt\/notes\/(\d+)$/.exec(p);
+        if (method === 'GET' && noteMatch) {
+          const note = notes.find((n) => n.id === Number(noteMatch[1]));
+          if (note) return sendHtml(res, simplePage(`Nota ${note.title}`));
+        }
+      }
+
       if (method === 'GET' && p === '/record') return sendHtml(res, recordPage());
       if (method === 'GET' && p === '/record/done') return sendHtml(res, recordDonePage());
 
@@ -453,6 +539,7 @@ export function startFixtureServer(): Promise<FixtureServer> {
         resetHits: () => {
           hitLog.length = 0;
         },
+        notes: () => notes.slice(),
         close: () =>
           new Promise<void>((res, rej) => {
             for (const interval of sseIntervals) clearInterval(interval);

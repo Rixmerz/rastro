@@ -1,6 +1,6 @@
 ---
 name: rastro
-description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath.
+description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath. Also runs saved routines (a recorded site task exposed as a tool with typed params, some replayed over plain HTTP without a browser): check `rastro routine list` before browsing a site the user works with, and use this skill to make, run or link one.
 allowed-tools: Bash(rastro:*)
 ---
 
@@ -50,6 +50,10 @@ Use `effects 4` to see which requests the action triggered, then `request r31 --
 
 **Writes are guarded, including the site you opened.** Every POST/PUT/PATCH/DELETE (logins and form submits too) is blocked unless its host was allowed at `open`: `rastro open https://shop.test/login --allow-write shop.test`. A blocked write shows as `1 write blocked (host)` in the summary. Only allow the hosts the task needs.
 
+## Routines first
+
+Before browsing a known site, check `rastro_routines` (or `rastro routine list`). If a routine covers the task, run it with its params instead of navigating: one call, a result that says what was written and whether a retry is safe. See `routines.md`.
+
 ## Delegating browsing
 
 For multi-step goals that take more than 3–4 interactions (login flows, multi-page forms, investigating site behavior), use the `navegador` agent instead of orchestrating rastro commands yourself. Give it a goal and optional constraints (session name, URL, write allowlist), and it keeps the page context out of the main thread. It returns the outcome, evidence ids (like `#4`, `r31`), and the session name so you can investigate further if needed.
@@ -61,5 +65,6 @@ For multi-step goals that take more than 3–4 interactions (login flows, multi-
 - `investigate.md` — effects, trace filters, request/curl, snapshot, console, cookies, exports (HAR, Perfetto).
 - `autonomy.md` — dialogs, popups, downloads, timeouts, crash recovery, blocked states, write guard, secrets.
 - `flows.md` — record mode, flow YAML with login examples, flow run/resume, Playwright export, Chrome import.
+- `routines.md` — running routines, reading their results, making one, linking it to HTTP.
 
 See the CLI surface with `rastro -h` or run `rastro --json` for machine-readable output.

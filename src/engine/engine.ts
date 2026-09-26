@@ -2,7 +2,7 @@
 // issue against a session. Orchestrates session.ts (browser lifecycle),
 // recorder.ts (trace capture) and the pure attribution/format modules.
 
-import { appendFileSync, chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { Locator, Page } from 'playwright-core';
@@ -45,6 +45,11 @@ import { Recorder } from './recorder.ts';
 import { detectBlocked } from './blocked.ts';
 import { VERSION } from '../version.ts';
 import { FlowController } from './flows.ts';
+import { assertInsideDirs } from '../security/sandbox.ts';
+import { CookieJar } from '../link/jar.ts';
+import { linkFlow } from './link.ts';
+import { runRoutineInBrowser, type RoutineRunInput } from './routine-run.ts';
+import { formatRoutineResult } from '../routines/result.ts';
 
 const OpenParamsSchema = z.object({
   url: z.string().optional(),
@@ -101,6 +106,16 @@ const ExportParamsSchema = z.object({
   reveal: z.boolean().optional(),
 });
 const ActionIdSchema = z.object({ action: z.union([z.number(), z.string()]).transform((v) => Number(v)) });
+const RoutineRunParamsSchema = z.object({
+  file: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+const FlowLinkParamsSchema = z.object({
+  file: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  from: z.number().optional(),
+  to: z.number().optional(),
+});
 const ReplayParamsSchema = z.object({ id: z.string(), yes: z.boolean().optional() });
 
 function parse<T>(schema: z.ZodType<T>, params: Record<string, unknown>): T {
@@ -427,6 +442,9 @@ export class EngineCore implements Engine {
           },
           onBlockedWrite: (tabId, method, url, host) => {
             this.store.addEvent({ t: this.now(), type: 'blocked_write', actionId: null, bucket: null, tabId, requestId: null, data: { method, url, host } });
+          },
+          onWriteBody: (method, url, body) => {
+            this.recorder.noteWriteBody(method, url, body);
           },
           onCrash: (tabId) => {
             this.store.addEvent({ t: this.now(), type: 'crash', actionId: null, bucket: null, tabId, requestId: null, data: { target: tabId } });
@@ -899,23 +917,21 @@ export class EngineCore implements Engine {
    * name; only the session's own uploads dir and whatever `open
    * --allow-upload` added are fair game. Symlinks are resolved first so a
    * link inside an allowed dir cannot point back out. */
+  /** A stored response body, for the flow-link compiler. Stays in the daemon. */
+  readBody(hash: string): Buffer | null {
+    return this.bodies.read(hash);
+  }
+
+  /** Writes the cookies for `hosts` where the HTTP runner of a linked flow
+   * reads them. Only called for flows that have a recipe, and only with the
+   * recipe's hosts: a plain-text jar is worth having only for what replays it. */
+  async exportCookieJar(hosts: string[]): Promise<void> {
+    if (!this.session || hosts.length === 0) return;
+    CookieJar.fromBrowser(await this.session.context.cookies(), hosts).save(this.paths.cookies);
+  }
+
   assertUploadAllowed(filePath: string): void {
-    const session = this.requireSession();
-    let real: string;
-    try {
-      real = realpathSync(filePath);
-    } catch {
-      throw new RastroError('upload outside allowed dirs', 'open --allow-upload <dir>');
-    }
-    const allowed = session.uploadDirs.some((dir) => {
-      try {
-        const realDir = realpathSync(dir);
-        return real === realDir || real.startsWith(`${realDir}/`);
-      } catch {
-        return false;
-      }
-    });
-    if (!allowed) throw new RastroError('upload outside allowed dirs', 'open --allow-upload <dir>');
+    assertInsideDirs(filePath, this.requireSession().uploadDirs);
   }
 
   // --- investigation -----------------------------------------------------
@@ -1274,6 +1290,16 @@ export class EngineCore implements Engine {
   }
   async flowRun(rawParams: Record<string, unknown>): Promise<RpcResult> {
     return this.flows.flowRun(rawParams);
+  }
+  async routineRun(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(RoutineRunParamsSchema, rawParams);
+    const input: RoutineRunInput = { file: params.file };
+    if (params.params !== undefined) input.params = params.params;
+    const result = await runRoutineInBrowser(this, input);
+    return { text: formatRoutineResult(result), data: result };
+  }
+  async flowLink(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return linkFlow(this, parse(FlowLinkParamsSchema, rawParams));
   }
   async flowExport(rawParams: Record<string, unknown>): Promise<RpcResult> {
     return this.flows.flowExport(rawParams);

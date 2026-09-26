@@ -179,6 +179,86 @@ rastro record stop --save login-example
 rastro flow run login-example --param email=user@test.com
 ```
 
+## Rutinas: flows como herramientas del agente
+
+Un flow pasa a ser una **rutina** cuando lleva un bloque `tool:`. El agente la
+llama como cualquier herramienta, con parámetros tipados, en vez de manejar el
+navegador paso a paso o armar una línea de `flow run`.
+
+```yaml
+name: publish-file
+tool:
+  description: Publish a local file as a resource in a course section
+  effect: write              # read | write | destructive
+  session: school            # opcional: la sesión del daemon donde corre
+  allowWrite: [lms.example.edu]
+  allowUpload: [~/Documents]
+  login: login-school        # opcional: se corre una vez si aparece un login
+  loginWhen: { url: /login/* }
+params:
+  course:  { type: integer, description: numeric course id, example: 12345 }
+  section: { type: integer, description: section number }
+  file:    { type: path, description: local file to publish }
+steps: ...
+```
+
+```bash
+rastro routine list
+rastro routine show publish-file
+rastro routine run publish-file --param course=12345 --param section=1 --param file=~/Documents/a.pdf
+```
+
+Lo que evita que esto salga mal:
+
+- **Opt-in.** Solo los flows con bloque `tool:` son rutinas, y se llaman como
+  el archivo. Las grabaciones crudas siguen siendo flows.
+- **Período de prueba.** Una rutina recibe su propia herramienta MCP recién
+  cuando los bytes exactos de su archivo completaron una corrida. Editarla la
+  devuelve a prueba; mientras tanto se puede correr con `rastro_routine_run`.
+- **Permisos acotados.** La corrida usa `allowWrite` y `allowUpload` de la
+  rutina y después devuelve las listas de la sesión, también si falla. Los
+  parámetros del keyring nunca forman parte de la entrada de la herramienta.
+- **Sin escrituras duplicadas.** Una página de login (`loginWhen`) dispara el
+  flow `login` y **un** reintento, solo si todavía no se escribió nada. El
+  resultado lista las escrituras enviadas y dice si reintentar es seguro. Un
+  timeout del cliente responde que la rutina puede seguir corriendo, no que
+  falló.
+- **Un archivo roto no tumba el servidor.** Pierde su herramienta y aparece en
+  `rastro_routines` con el error.
+
+`rastro mcp` expone siempre `rastro_routines` y `rastro_routine_run`, y una
+herramienta por rutina verificada, actualizada en vivo cuando cambian los
+archivos. `--routines-only` deja al agente solo con rutinas verificadas;
+`--routines=catalog` deja solo las dos fijas; `--routines=off` las quita.
+
+## Enlazar un flow a sus llamadas HTTP
+
+`rastro flow link` convierte una rutina en requests HTTP directos, así corre
+sin Chromium: un proceso de Node en vez de un navegador.
+
+```bash
+rastro flow link publish-file --param course=12345 --param section=1 --param file=~/Documents/a.pdf
+rastro routine run publish-file --engine http ...   # la primera corrida HTTP verifica la receta
+```
+
+**El enlace corre el flow una vez de verdad**, en el navegador y con sus
+efectos reales, y compila los requests que causó esa corrida. Con
+`--from`/`--to` compila una corrida anterior.
+
+Los valores que cambian en cada corrida (un token CSRF, un id de borrador) se
+rastrean hasta la respuesta que los entregó y pasan a ser reglas de extracción.
+La receta **no guarda credenciales**: si una fuera a quedar en el archivo, el
+enlace se aborta. `auto` (el default) usa HTTP solo con una receta vigente y
+verificada, y vuelve al navegador **solo si todavía no se envió ninguna
+escritura**. Editar el flow deja la receta vieja; editar la receta a mano la
+deja sin verificar hasta otra corrida con `--engine http`. El jar de cookies
+(`sessions/<sesión>/cookies.json`, modo 0600) guarda solo las cookies de los
+hosts de la receta, no el resto del perfil.
+
+**No se puede enlazar, a propósito:** requests firmados por JavaScript de la
+página, WebSockets, tokens de vida corta generados en el navegador, y subidas
+cuyo cuerpo el navegador no expone. Esas rutinas siguen en el navegador.
+
 ## Plugin Claude Code
 
 ### Instalación

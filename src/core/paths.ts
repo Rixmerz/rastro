@@ -31,8 +31,36 @@ export function runtimeDir(): string {
 export function flowsDir(): string {
   const local = join(process.cwd(), '.rastro', 'flows');
   if (existsSync(local)) return local;
+  return userFlowsDir();
+}
+
+/** The user-level flows directory, whether or not a project one exists. */
+export function userFlowsDir(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
   return join(base, 'rastro', 'flows');
+}
+
+/**
+ * Where routines are looked for, in precedence order: `RASTRO_FLOWS`
+ * (colon-separated) when set, otherwise the project's `.rastro/flows` when it
+ * exists and then the user's. Unlike `flowsDir()` this reads both, because a
+ * routine server started from a project should still see the user's routines.
+ */
+export function routineDirs(): string[] {
+  const override = process.env.RASTRO_FLOWS;
+  if (override !== undefined && override.trim() !== '') {
+    return [...new Set(override.split(':').filter((d) => d.length > 0).map((d) => resolve(d)))];
+  }
+  const local = join(process.cwd(), '.rastro', 'flows');
+  const dirs = existsSync(local) ? [local, userFlowsDir()] : [userFlowsDir()];
+  return [...new Set(dirs)];
+}
+
+/** Machine-local routine bookkeeping (verification markers, last runs). Not
+ * next to the flows: a marker committed to git would claim a run that happened
+ * on someone else's machine. */
+export function routinesStateDir(): string {
+  return join(rastroHome(), 'routines');
 }
 
 /**
@@ -68,6 +96,8 @@ export interface SessionPaths {
   profile: string;
   socket: string;
   pid: string;
+  /** Cookie jar exported for HTTP replays of linked flows (mode 0600). */
+  cookies: string;
 }
 
 export function sessionPaths(name: string): SessionPaths {
@@ -84,6 +114,7 @@ export function sessionPaths(name: string): SessionPaths {
     profile: join(rastroHome(), 'profiles', name),
     socket: join(runtimeDir(), `${name}.sock`),
     pid: join(root, 'daemon.pid'),
+    cookies: join(root, 'cookies.json'),
   };
 }
 

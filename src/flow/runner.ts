@@ -394,7 +394,7 @@ async function runAssert(ctx: RunCtx, step: FlowStep, label: string): Promise<St
   }
 }
 
-async function evaluateCondition(core: FlowRunnerCore, condition: Condition, prevRequests: RequestRecord[]): Promise<boolean> {
+export async function evaluateCondition(core: FlowRunnerCore, condition: Condition, prevRequests: RequestRecord[]): Promise<boolean> {
   if (condition.text !== undefined) {
     if (!core.session) return false;
     try {

@@ -117,10 +117,15 @@ export const USAGE: Record<string, string> = {
   'flow save': 'rastro flow save <name|file> [--from id] [--to id] [--name n]',
   'flow run': 'rastro flow run <name|file> [--from n] [--param k=v ...]',
   'flow export': 'rastro flow export <name|file> [--out path] [--playwright]',
+  'flow link': 'rastro flow link <name|file> [--param k=v ...] [--from id --to id]',
   'flow import': 'rastro flow import <chrome.json> <out.yaml>',
+  routine: 'rastro routine list | rastro routine show <name> | rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
+  'routine list': 'rastro routine list',
+  'routine show': 'rastro routine show <name>',
+  'routine run': 'rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
   status: 'rastro status',
   close: 'rastro close',
-  mcp: 'rastro mcp',
+  mcp: 'rastro mcp [--routines tools|catalog|off] [--routines-only]',
 };
 
 export const TOP_LEVEL_HELP = `rastro — a browser for AI agents
@@ -132,7 +137,8 @@ commands:
   view, act (click, fill, type, press, select, check, uncheck, hover, dblclick, scroll, upload)
   detail, history, effects, trace, request, snapshot, screenshot
   console, cookies, storage, tabs, eval, replay, export
-  record start|stop, flow save|run|export|import
+  record start|stop, flow save|run|link|export|import
+  routine list|show|run
   secret set|list|rm
   status, close, kill, mcp
 

@@ -36,6 +36,8 @@ export async function createEngine(_session: string): Promise<Engine & { shutdow
     'recordStop',
     'flowSave',
     'flowRun',
+    'routineRun',
+    'flowLink',
     'flowExport',
     'flowImport',
     'status',

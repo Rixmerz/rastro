@@ -296,3 +296,9 @@ Supports Chrome Recorder steps:
 - `waitForElement`: visibility check
 
 The generated flow uses Rastro's locator format (role, name, text, CSS). Edit as needed before running.
+
+## Turning a flow into a routine
+
+A flow with a `tool:` block becomes a routine: a tool an agent calls with typed
+params, verified after one good run, and linkable to plain HTTP with
+`rastro flow link`. See `routines.md`.

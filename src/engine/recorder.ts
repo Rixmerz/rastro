@@ -43,7 +43,7 @@ interface CdpResponse {
 
 interface CdpRequestWillBeSent {
   requestId: string;
-  request: { url: string; method: string; headers: Record<string, string>; postData?: string };
+  request: { url: string; method: string; headers: Record<string, string>; postData?: string; hasPostData?: boolean };
   initiator: CdpInitiator;
   redirectResponse?: CdpResponse;
   type?: string;
@@ -286,7 +286,11 @@ export class Recorder {
       // best effort; isNavigation falls back to false without it.
     }
 
-    client.on('Network.requestWillBeSent', (e) => this.onRequestWillBeSent(e as CdpRequestWillBeSent, tabId));
+    client.on('Network.requestWillBeSent', (e) => {
+      const event = e as CdpRequestWillBeSent;
+      this.onRequestWillBeSent(event, tabId);
+      if (event.request.hasPostData && event.request.postData === undefined) void this.fetchPostData(event.requestId, client);
+    });
     client.on('Network.requestWillBeSentExtraInfo', (e) => this.onRequestExtraInfo(e as CdpExtraInfoHeaders));
     client.on('Network.responseReceived', (e) => this.onResponseReceived(e as CdpResponseReceived, tabId));
     client.on('Network.responseReceivedExtraInfo', (e) => this.onResponseExtraInfo(e as CdpExtraInfoHeaders));
@@ -534,6 +538,10 @@ export class Recorder {
       bucket: null,
     };
     if (e.request.postData !== undefined) rec.postData = e.request.postData;
+    else if (e.request.hasPostData && !e.redirectResponse) {
+      const body = this.takeRouteBody(e.request.method, e.request.url);
+      if (body !== undefined) rec.postData = body;
+    }
     if (redirectedFrom !== undefined) rec.redirectedFrom = redirectedFrom;
 
     const pendingReqHeaders = this.pendingRequestExtraHeaders.get(e.requestId);
@@ -605,6 +613,57 @@ export class Recorder {
     if (this.clearPending(e.requestId)) this.markActivity();
   }
 
+  /** Bodies the router saw for allowed writes, waiting for the request record
+   * CDP had not reported yet. Keyed by method and URL, oldest first. */
+  private readonly routeBodies = new Map<string, string[]>();
+
+  /** Gives a write's body to its request record when CDP left it out. The
+   * router and CDP report the same request independently, so whichever comes
+   * second completes the record. */
+  noteWriteBody(method: string, url: string, body: string): void {
+    if (Buffer.byteLength(body) > MAX_BODY_BYTES) return;
+    const since = this.now() - 30_000;
+    const rec = this.store
+      .requests({ since })
+      .reverse()
+      .find((r) => r.method === method && r.url === url && r.postData === undefined && r.redirectedFrom === undefined);
+    if (rec) {
+      rec.postData = body;
+      this.store.upsertRequest(rec);
+      return;
+    }
+    const key = `${method} ${url}`;
+    const queue = this.routeBodies.get(key) ?? [];
+    queue.push(body);
+    // Only the last few matter; an endless queue would be a leak.
+    this.routeBodies.set(key, queue.slice(-4));
+  }
+
+  private takeRouteBody(method: string, url: string): string | undefined {
+    const key = `${method} ${url}`;
+    const queue = this.routeBodies.get(key);
+    const body = queue?.shift();
+    if (queue && queue.length === 0) this.routeBodies.delete(key);
+    return body;
+  }
+
+  /** A body the event left out — a multipart upload's, notably — asked for
+   * separately. Chromium returns the structure (field names, file name and
+   * type) with the file's bytes empty, which is what `flow link` needs to
+   * replay the upload with a file given at run time. */
+  private async fetchPostData(cdpId: string, client: CDPSession): Promise<void> {
+    try {
+      const { postData } = (await client.send('Network.getRequestPostData', { requestId: cdpId })) as { postData: string };
+      const rec = this.store.getRequestByCdpId(cdpId);
+      if (rec && rec.postData === undefined && Buffer.byteLength(postData) <= MAX_BODY_BYTES) {
+        rec.postData = postData;
+        this.store.upsertRequest(rec);
+      }
+    } catch {
+      // gone already, or no body after all: the request keeps none.
+    }
+  }
+
   private async onLoadingFinished(e: CdpLoadingFinished, client: CDPSession): Promise<void> {
     const rec = this.store.getRequestByCdpId(e.requestId);
     if (rec) {
@@ -624,6 +683,8 @@ export class Recorder {
         } catch {
           // body unavailable (e.g. no-content responses, or the page navigated away); not fatal.
         }
+        // `fetchPostData` may have stored the request body while this awaited.
+        rec.postData ??= this.store.getRequestByCdpId(e.requestId)?.postData;
       }
       this.store.upsertRequest(rec);
     }

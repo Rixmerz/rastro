@@ -301,6 +301,8 @@ export type RpcMethod =
   | 'recordStop'
   | 'flowSave'
   | 'flowRun'
+  | 'routineRun'
+  | 'flowLink'
   | 'flowExport'
   | 'flowImport'
   | 'status'

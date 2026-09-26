@@ -47,8 +47,14 @@ export type FlowStep = StepBase &
     | { if: Condition; then: FlowStep[]; else?: FlowStep[] }
   );
 
+export type ParamType = 'string' | 'integer' | 'number' | 'boolean' | 'path' | 'url';
+
 export interface FlowParam {
   secret?: boolean;
+  /** Validated (and, for `path`, normalised) before a routine's first step. */
+  type?: ParamType;
+  enum?: string[];
+  example?: string | number | boolean;
   default?: string;
   /** What the caller is expected to supply. A recorded upload puts the file's
    * name here, since the flow cannot carry the path itself. */
@@ -58,8 +64,24 @@ export interface FlowParam {
   from?: string;
 }
 
+export type Effect = 'read' | 'write' | 'destructive';
+
+/** The `tool:` block that turns a flow into a routine an agent can call. */
+export interface ToolManifest {
+  description: string;
+  effect: Effect;
+  /** Daemon session the routine runs in; the caller's session otherwise. */
+  session?: string;
+  allowWrite?: string[];
+  allowUpload?: string[];
+  /** Flow (name or path) run once when a step fails on a page matching `loginWhen`. */
+  login?: string;
+  loginWhen?: Condition;
+}
+
 export interface Flow {
   name: string;
+  tool?: ToolManifest;
   params?: Record<string, FlowParam>;
   steps: FlowStep[];
 }
@@ -136,6 +158,9 @@ const waitSchema = z.strictObject({
 
 const paramSchema = z.strictObject({
   secret: z.boolean().optional(),
+  type: z.enum(['string', 'integer', 'number', 'boolean', 'path', 'url']).optional(),
+  enum: z.array(z.string()).min(1).optional(),
+  example: z.union([z.string(), z.number(), z.boolean()]).optional(),
   default: z.string().optional(),
   description: z.string().optional(),
   from: z.string().regex(/^secret:/, 'only "secret:<name>" sources are supported').optional(),
@@ -151,6 +176,37 @@ const paramsSchema = z.record(
   z.string().regex(PARAM_NAME_RE, 'must be a valid identifier'),
   paramSchema,
 );
+
+const toolSchema = z.strictObject({
+  description: z.string().min(1, 'expected a non-empty description'),
+  effect: z.enum(['read', 'write', 'destructive']),
+  session: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'invalid session name').optional(),
+  allowWrite: z.array(z.string().min(1)).optional(),
+  allowUpload: z.array(z.string().min(1)).optional(),
+  login: z.string().min(1).optional(),
+  loginWhen: z.unknown().optional(),
+});
+
+function parseTool(raw: unknown): ToolManifest {
+  const parsed = toolSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue && issue.path.length > 0 ? `.${issue.path.join('.')}` : '';
+    throw new Error(`tool${where}: ${issue?.message ?? 'invalid'}`);
+  }
+  const { loginWhen, ...rest } = parsed.data;
+  const tool: ToolManifest = { ...rest } as ToolManifest;
+  for (const key of Object.keys(tool) as (keyof ToolManifest)[]) {
+    if (tool[key] === undefined) delete tool[key];
+  }
+  if (loginWhen !== undefined) tool.loginWhen = parseCondition(loginWhen, 'tool.loginWhen');
+  // A login flow with no way to tell a login page apart would either never
+  // run or run after every failure, and the second one is the dangerous one.
+  if (tool.login !== undefined && tool.loginWhen === undefined) {
+    throw new Error('tool.loginWhen: required when tool.login is set');
+  }
+  return tool;
+}
 
 function requireObject(raw: unknown, path: string): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -341,11 +397,16 @@ export function parseFlow(text: string): Flow {
     params = parsed.data;
   }
 
+  const tool = obj['tool'] !== undefined ? parseTool(obj['tool']) : undefined;
+
   const stepsRaw = obj['steps'];
   if (!Array.isArray(stepsRaw)) throw new Error('steps: expected a list of steps');
   const steps = stepsRaw.map((s, i) => parseStep(s, `steps[${i}]`));
 
-  return params ? { name: obj['name'], params, steps } : { name: obj['name'], steps };
+  const flow: Flow = { name: obj['name'], steps };
+  if (tool) flow.tool = tool;
+  if (params) flow.params = params;
+  return flow;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +430,7 @@ function orderStep(step: FlowStep): Record<string, unknown> {
 
 export function stringifyFlow(flow: Flow): string {
   const doc: Record<string, unknown> = { name: flow.name };
+  if (flow.tool) doc['tool'] = flow.tool;
   if (flow.params) doc['params'] = flow.params;
   doc['steps'] = flow.steps.map(orderStep);
   return stringifyYaml(doc);
@@ -610,4 +672,29 @@ export function actionsToFlow(
   }
 
   return Object.keys(params).length > 0 ? { name, params, steps } : { name, steps };
+}
+
+/** Hosts of a flow's own navigations: the default write allowlist of a
+ * routine whose manifest names none, the same thing `flow run` allows on
+ * auto-launch. */
+export function navigationHosts(steps: FlowStep[], values: Record<string, string>): string[] {
+  const hosts = new Set<string>();
+  const visit = (list: FlowStep[]): void => {
+    for (const step of list) {
+      const raw = step as unknown as Record<string, unknown>;
+      const kind = stepKind(step);
+      if (kind === 'open' || kind === 'goto') {
+        try {
+          hosts.add(new URL(substitute(raw[kind] as string, values)).hostname);
+        } catch {
+          // an unsubstitutable or malformed URL fails on the step itself.
+        }
+      } else if (kind === 'if') {
+        visit(raw['then'] as FlowStep[]);
+        visit((raw['else'] as FlowStep[] | undefined) ?? []);
+      }
+    }
+  };
+  visit(steps);
+  return [...hosts];
 }
