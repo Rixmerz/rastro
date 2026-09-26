@@ -5,6 +5,94 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-26
+
+### Added — routines: saved flows as agent tools
+
+- **A flow with a `tool:` block is a routine**: a description, an `effect`
+  (`read`, `write`, `destructive`), and optionally a session, write and upload
+  allowlists, and a login flow with the condition that detects a login page.
+  Only flows that carry the block are exposed; raw recordings are not.
+- **Typed parameters**: `type` (`string`, `integer`, `number`, `boolean`,
+  `path`, `url`), `enum` and `example`, validated before the first step, in the
+  daemon and in the MCP server. Keyring parameters cannot be supplied by the
+  caller.
+- **Probation**: a routine becomes its own MCP tool only after the exact bytes
+  of its file completed a run (`flow run` or `routine run`). Verification is a
+  content-hash marker under `~/.local/share/rastro/routines/`, so an edit resets
+  it and a rename keeps it.
+- **`routineRun` RPC** runs a routine with its own allowlists for the run only,
+  restoring the session's afterwards, refreshes an expired login once **only if
+  no write was sent**, and returns a structured result: final URL, writes sent
+  with their redirect targets, evidence ids, and whether a retry is safe.
+- **MCP**: `rastro_routines` and `rastro_routine_run` always; one tool per
+  verified routine with a generated schema and annotations from `effect`,
+  reconciled live when files change. A client timeout answers that the routine
+  may still be running. `rastro mcp --routines-only` and `--routines=catalog|off`.
+- **CLI**: `rastro routine list|show|run`.
+- Routines are read from the project's `.rastro/flows/` **and** the user's
+  `~/.config/rastro/flows/`, with collisions reported, or from `RASTRO_FLOWS`.
+
+### Added — flow link: replaying a routine over HTTP, without a browser
+
+- **`rastro flow link <name>`** runs a flow once in the browser (or takes an
+  earlier run with `--from`/`--to`) and compiles the requests it caused into
+  `<name>.link.yaml`: parameters bound back to `{{param}}`, run-specific values
+  traced to the earlier response that handed them out and turned into
+  extraction rules (JSON path, form input, Location, query, regex), and
+  double-submit tokens read from the cookie jar at run time.
+- **The recipe holds no credential**: the link aborts before writing if a
+  secret, cookie or Authorization value would end up in the file.
+- **Engines**: `routine run --engine auto|browser|http` and the same on
+  `rastro_routine_run`. `auto` replays over HTTP only with a fresh, verified
+  recipe and falls back to the browser only while no write has been sent. A
+  recipe is verified by one successful HTTP run, and goes stale when its flow
+  changes.
+- The HTTP runner uses a cookie jar exported from the browser session
+  (`sessions/<name>/cookies.json`, mode 0600), written only for flows that have
+  a recipe and holding only the cookies of that recipe's hosts, and applies the
+  same upload sandbox and write allowlist as the browser.
+- A routine's writes are counted by time, not by attribution: a POST that lands
+  after the quiet window still makes a retry unsafe. Background traffic and
+  writes the guard blocked do not count.
+
+### Fixed — what the first run against a real Moodle showed
+
+- **The request that mattered was unattributed.** Moodle's file upload landed
+  with no action attributed to it, inside the very click that sent it, so a
+  recipe built by attribution replayed the form with no file. `flow link` now
+  collects requests by time window over the run's actions, leaving out only
+  traffic already classified as background.
+- **Upload bodies were missing.** Moodle's file picker posts a multipart form
+  into an iframe; CDP reports no body for it and `Network.getRequestPostData`
+  cannot find it. The write guard's router sees it, so it now hands the body to
+  the recorder. Bodies CDP leaves out of an XHR are fetched with
+  `getRequestPostData`. The file's bytes are empty in both, which is all a
+  recipe needs: the file comes from its parameter at run time.
+- **Recipes were full of page chatter.** Moodle sends about 30 script POSTs a
+  page. When the flow names what matters in `expect.requests`, a script POST
+  is kept only if it is named, sends a file, or something kept reads from it
+  (walked as a dependency graph); the rest is listed as dropped. With no
+  `expect.requests`, every write stays, since dropping the one that matters
+  would make a replay report success having done nothing.
+- **Constants were traced as if dynamic.** Words and identifiers that also
+  appear in some earlier script (`XMLHttpRequest`, template names, button
+  labels) became extraction rules. Only values with a digit, long mixed-case
+  tokens, and values found in an `<input>` named like the field are traced now.
+- **Results listed every script POST and printed the session key.** Written
+  paths no longer carry their query; script POSTs are counted, not listed; an
+  HTTP run reports where the last form or navigation landed.
+
+Measured on a real course: publishing a file took 27 s in the browser and
+7.7 s over HTTP; creating an assignment, 25 s and 5 s.
+
+### Changed
+
+- The upload sandbox rule moved to `src/security/sandbox.ts`, shared by the
+  browser engine and the HTTP runner.
+- Continuing a recording (`record start --continue`) keeps the flow's `tool:`
+  block and parameters.
+
 ### Added — published to npm, and it runs off a Mac
 
 `npm i -g @rixmerz/rastro` is the install now. The plugin's MCP entry runs
@@ -295,4 +383,5 @@ recording.
   high) fixed in full, each with a regression test. The 5 high ones were secret
   leaks through `--json`, snapshots, HAR and `pw-trace`.
 
+[0.2.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.1.0
