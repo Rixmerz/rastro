@@ -5,6 +5,40 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-27
+
+### Added — reading a page, and routines that return what they read
+
+An agent asked to read a mail in Outlook could not, whatever the model: `view`
+lists what can be acted on, a mail body is plain text, and over MCP there was
+no `eval` either. Routines had the same gap, reporting what they wrote and
+nothing they read.
+
+- **`rastro read`** and **`rastro_read`**: the visible text of `main` (or the
+  page), of a region by the view's names, of one ref, or the lines around a
+  word; normalised, capped at 12 000 characters with a note, and masked.
+- **`read` and `capture` flow steps**, each naming an output with `as`.
+  `capture` takes the JSON a request of the run answered with, waiting for its
+  body: a JSON path with `[*]`, a `fields` projection, and request patterns
+  whose path can now include a query. A JSON document nested in a string is
+  parsed on the way.
+- Routine and flow results carry the outputs, in text and in data.
+- **Captures over HTTP**: `flow link` keeps the captured request and the
+  recipe replays the capture; a flow that reads page text is refused.
+- The MCP server's instructions point at `rastro_read` for the text a page says.
+
+### Fixed
+
+- A read routine that failed while page scripts POSTed on their own (a capture
+  waiting out its timeout on Moodle or Outlook) reported "do NOT retry". With
+  `effect: read` and only script POSTs sent, a retry is safe and says so.
+- Handing a write's body from the router to the recorder scanned the last 30 s
+  of the trace on every allowed write. It is a lookup now.
+
+Verified on the real case that motivated this: `rastro read --region aside`
+returned an Outlook inbox as text, and `rastro read` on an open mail returned
+its whole body.
+
 ## [0.2.1] — 2026-09-27
 
 ### Fixed — an agent called a working page "blocked"
@@ -399,6 +433,7 @@ recording.
   high) fixed in full, each with a regression test. The 5 high ones were secret
   leaks through `--json`, snapshots, HAR and `pw-trace`.
 
+[0.3.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.1.0
