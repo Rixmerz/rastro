@@ -10,7 +10,7 @@
 // when it looks like a token nobody could trace).
 
 import type { RequestRecord } from '../core/types.ts';
-import type { ExtractRule, Recipe, RecipePart, RecipeRequest } from './recipe.ts';
+import type { ExtractRule, Recipe, RecipeOutput, RecipePart, RecipeRequest } from './recipe.ts';
 import { isWriteRequest, stringifyRecipe } from './recipe.ts';
 import { matchesRequestPattern } from '../flow/format.ts';
 
@@ -37,6 +37,10 @@ export interface CompileInput {
   containsSecret(text: string): boolean;
   /** The flow's `expect.requests` patterns: the writes its author said matter. */
   expected?: string[];
+  /** The flow's `capture` steps: the responses the recipe must keep and read. */
+  captures?: RecipeOutput[];
+  /** The flow reads page text, which has no HTTP equivalent. */
+  readsPage?: boolean;
 }
 
 const KEPT_TYPES = new Set(['document', 'xhr', 'fetch']);
@@ -225,6 +229,7 @@ function statusClass(status: number | undefined): string | undefined {
 const KEEP_HEADERS = new Set(['accept', 'content-type', 'origin', 'referer', 'user-agent']);
 
 export function compileRecipe(input: CompileInput): Recipe {
+  if (input.readsPage) throw new NotLinkable('the flow reads page text (a read step), which needs a page; keep it in the browser or capture the response instead');
   const chains = buildChains(input.requests);
   if (chains.length === 0) throw new NotLinkable('the run caused no document, xhr or fetch request');
 
@@ -460,6 +465,9 @@ export function compileRecipe(input: CompileInput): Recipe {
   // unless something that matters reads from them. When the flow names no
   // expected request, every write stays: dropping the one that matters would
   // make a replay report success having done nothing.
+  // A capture names a response the replay must fetch again, read or write.
+  const captured = (input.captures ?? []).map((c) => c.request.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (m, n: string) => input.params[n] ?? m));
+  // Pruning still answers only to what the author declared in expect.requests.
   const expected = input.expected ?? [];
   const varsOf = (request: RecipeRequest): string[] => {
     const text = JSON.stringify([request.url, request.query, request.form, request.json, request.multipart, request.raw, request.headers]);
@@ -483,9 +491,11 @@ export function compileRecipe(input: CompileInput): Recipe {
     const setsCookie = chain.hops.some((h) => headerOf(h.responseHeaders, 'set-cookie') !== undefined);
     const write = isWriteRequest(request);
     const named = expected.some((p) => matchesRequestPattern(p, { method: chain.head.method, url: chain.head.url, status: chain.head.status }));
+    const isCaptured = captured.some((p) => matchesRequestPattern(p, { method: chain.head.method, url: chain.head.url, status: chain.head.status }));
     const matters =
       i === out.length - 1 ||
       setsCookie ||
+      isCaptured ||
       (write && (chain.head.resourceType === 'document' || expected.length === 0 || named || carriesFile(request)));
     if (matters) required.add(i);
     else if (write) dropped.add(`${request.method} ${new URL(chain.head.url).pathname}`);
@@ -526,6 +536,13 @@ export function compileRecipe(input: CompileInput): Recipe {
     params: input.callerParams,
     requests: kept,
   };
+  if (input.captures && input.captures.length > 0) {
+    for (const [k, pattern] of captured.entries()) {
+      const hit = chains.some((c) => matchesRequestPattern(pattern, { method: c.head.method, url: c.head.url, status: c.head.status }));
+      if (!hit) throw new NotLinkable(`capture ${input.captures[k]!.as}: no request of the run matched ${pattern}`);
+    }
+    recipe.outputs = input.captures;
+  }
   if (warnings.length > 0) recipe.warnings = warnings;
   assertNoCredentials(recipe, input);
   return recipe;

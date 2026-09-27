@@ -8,9 +8,11 @@
 import type { Locator, Page } from 'playwright-core';
 import type { RequestRecord, RpcResult } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
-import type { Condition, Expect, Flow, FlowStep, StepKind, Target } from './format.ts';
+import type { CaptureSpec, Condition, Expect, Flow, FlowStep, ReadSpec, StepKind, Target } from './format.ts';
 import { matchesRequestPattern, parseRequestPattern, stepKind, substitute } from './format.ts';
 import { resolveBundle } from '../perception/locators.ts';
+import { readText } from '../perception/read.ts';
+import { project, selectJson } from './json-path.ts';
 import { quote } from '../format/text.ts';
 import type { Session } from '../engine/session.ts';
 import type { SecretRegistry } from '../security/redact.ts';
@@ -22,8 +24,11 @@ import type { RunActionInput } from '../engine/engine.ts';
 export interface FlowRunnerCore {
   readonly session: Session | undefined;
   readonly secrets: SecretRegistry;
-  readonly store: { requests(q: { actionId?: number }): RequestRecord[] };
+  readonly store: { requests(q: { actionId?: number; since?: number }): RequestRecord[] };
   readonly timeoutMs: number;
+  /** Session clock (ms since the session started), the one requests carry. */
+  now(): number;
+  readBody(hash: string): Buffer | null;
   open(params: Record<string, unknown>): Promise<RpcResult>;
   runAction(input: RunActionInput): Promise<RpcResult>;
   /** The upload sandbox, shared with `act` rather than reimplemented: one rule
@@ -42,6 +47,8 @@ export interface RunFlowResult {
   failedStep?: number;
   reason?: string;
   lines: string[];
+  /** What `read` and `capture` steps produced, by their `as` name. */
+  outputs?: Record<string, unknown>;
 }
 
 type StepOutcome = { ok: true } | { ok: false; message: string };
@@ -191,6 +198,67 @@ interface RunCtx {
   lines: string[];
   reqRef: { current: RequestRecord[] };
   countRef: { count: number };
+  outputs: Record<string, unknown>;
+  /** Session time the run started: a capture only looks at what came after. */
+  startedAt: number;
+}
+
+/** A value leaves the run masked, whatever its shape. */
+function maskValue(core: FlowRunnerCore, value: unknown): unknown {
+  if (typeof value === 'string') return core.secrets.mask(value);
+  return JSON.parse(core.secrets.mask(JSON.stringify(value))) as unknown;
+}
+
+async function runRead(ctx: RunCtx, step: FlowStep, label: string): Promise<StepOutcome> {
+  const spec = (step as unknown as { read: ReadSpec }).read;
+  try {
+    const page = requirePage(ctx.core);
+    const locator = spec.target ? await resolve(page, spec.target) : undefined;
+    const result = await readText(page, {
+      region: spec.region,
+      locator,
+      find: spec.find === undefined ? undefined : substitute(spec.find, ctx.paramValues),
+      max: spec.max,
+      timeoutMs: ctx.core.timeoutMs,
+    });
+    ctx.outputs[step.as!] = maskValue(ctx.core, result.text);
+    ctx.lines.push(`[${label}] read ${step.as!} · ${result.chars} chars from ${result.region}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function runCapture(ctx: RunCtx, step: FlowStep, label: string): Promise<StepOutcome> {
+  const spec = (step as unknown as { capture: CaptureSpec }).capture;
+  const pattern = substitute(spec.request, ctx.paramValues);
+  const deadline = Date.now() + ctx.core.timeoutMs;
+  // Bodies are stored once the response finishes loading, a beat after the
+  // request itself shows up: wait for one that has it.
+  for (;;) {
+    const match = ctx.core.store
+      .requests({ since: ctx.startedAt })
+      .filter((r) => r.bodyHash !== undefined && matchesRequestPattern(pattern, r))
+      .at(-1);
+    if (match) {
+      const body = ctx.core.readBody(match.bodyHash!);
+      let json: unknown;
+      try {
+        json = JSON.parse(body?.toString('utf8') ?? '');
+      } catch {
+        return { ok: false, message: `capture ${step.as!}: ${match.id} did not answer JSON` };
+      }
+      let value = spec.json === undefined ? json : selectJson(json, spec.json);
+      if (value === undefined) return { ok: false, message: `capture ${step.as!}: ${spec.json!} selected nothing in ${match.id}` };
+      if (spec.fields) value = project(value, spec.fields);
+      ctx.outputs[step.as!] = maskValue(ctx.core, value);
+      const size = Array.isArray(value) ? `${value.length} items` : typeof value;
+      ctx.lines.push(`[${label}] capture ${step.as!} · ${size} from ${match.id}`);
+      return { ok: true };
+    }
+    if (Date.now() >= deadline) return { ok: false, message: `capture ${step.as!}: no ${pattern} with a JSON body in this run` };
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 async function runActionStep(ctx: RunCtx, step: FlowStep, kind: StepKind, label: string): Promise<StepOutcome> {
@@ -439,6 +507,8 @@ async function runSteps(
     const outcome =
       kind === 'wait' ? await runWait(ctx, step, label)
       : kind === 'assert' ? await runAssert(ctx, step, label)
+      : kind === 'read' ? await runRead(ctx, step, label)
+      : kind === 'capture' ? await runCapture(ctx, step, label)
       : await runActionStep(ctx, step, kind, label);
 
     if (!outcome.ok) return { ok: false, failLabel: label, message: outcome.message };
@@ -458,6 +528,8 @@ export async function runFlow(
     lines: [],
     reqRef: { current: [] },
     countRef: { count: 0 },
+    outputs: {},
+    startedAt: ctxIn.core.now(),
   };
 
   const startIndex = (opts.from ?? 1) - 1;
@@ -469,9 +541,12 @@ export async function runFlow(
     const numericStep = Number(outcome.failLabel.split('.')[0]);
     const result: RunFlowResult = { ok: false, stepsRun: ctx.countRef.count, reason: message, lines: ctx.lines };
     if (Number.isFinite(numericStep)) result.failedStep = numericStep;
+    if (Object.keys(ctx.outputs).length > 0) result.outputs = ctx.outputs;
     return result;
   }
 
   ctx.lines.push(`flow ${quote(flow.name)} passed (${ctx.countRef.count} steps)`);
-  return { ok: true, stepsRun: ctx.countRef.count, lines: ctx.lines };
+  const result: RunFlowResult = { ok: true, stepsRun: ctx.countRef.count, lines: ctx.lines };
+  if (Object.keys(ctx.outputs).length > 0) result.outputs = ctx.outputs;
+  return result;
 }

@@ -38,15 +38,16 @@ afterEach(() => {
 });
 
 describe('tool listing', () => {
-  test('lists the 10 browser tools and the 2 routine tools with short descriptions', async () => {
+  test('lists the 11 browser tools and the 2 routine tools with short descriptions', async () => {
     const { client } = await connect(() => Promise.resolve({ text: 'ok', data: null }));
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
         'rastro_open',
         'rastro_view',
+        'rastro_read',
         'rastro_act',
         'rastro_navigate',
         'rastro_effects',
@@ -71,6 +72,17 @@ describe('tool listing', () => {
     expect(instructions).toMatch(/call rastro_routines/);
     expect(instructions).toMatch(/do NOT retry/);
     expect(instructions.length).toBeLessThan(1200);
+  });
+
+  test('rastro_read reaches the read method with its region, ref and find', async () => {
+    const calls: Call[] = [];
+    const { client } = await connect((session, method, params) => {
+      calls.push({ session, method, params });
+      return Promise.resolve({ text: 'https://mail.test · main · 20 chars\nHola profe, ¿qué tal?', data: null });
+    });
+    const result = await client.callTool({ name: 'rastro_read', arguments: { region: 'main', find: 'profe' } });
+    expect((result.content as { text: string }[])[0]!.text).toContain('Hola profe');
+    expect(calls[0]).toMatchObject({ method: 'read', params: { region: 'main', find: 'profe' } });
   });
 
   test('rastro_request input schema has no reveal field', async () => {
@@ -345,6 +357,6 @@ steps:
     expect(names).not.toContain('add-note');
 
     const off = await connectWith(() => Promise.resolve({ text: 'ok', data: null }), { routines: 'off' });
-    expect((await off.client.listTools()).tools).toHaveLength(10);
+    expect((await off.client.listTools()).tools).toHaveLength(11);
   });
 });

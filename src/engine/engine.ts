@@ -46,6 +46,7 @@ import { detectBlocked } from './blocked.ts';
 import { VERSION } from '../version.ts';
 import { FlowController } from './flows.ts';
 import { assertInsideDirs } from '../security/sandbox.ts';
+import { readText, type ReadOptions } from '../perception/read.ts';
 import { CookieJar } from '../link/jar.ts';
 import { linkFlow } from './link.ts';
 import { runRoutineInBrowser, type RoutineRunInput } from './routine-run.ts';
@@ -115,6 +116,12 @@ const FlowLinkParamsSchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
   from: z.number().optional(),
   to: z.number().optional(),
+});
+const ReadParamsSchema = z.object({
+  region: z.string().optional(),
+  ref: z.string().optional(),
+  find: z.string().optional(),
+  max: z.number().int().positive().optional(),
 });
 const ReplayParamsSchema = z.object({ id: z.string(), yes: z.boolean().optional() });
 
@@ -353,7 +360,7 @@ export class EngineCore implements Engine {
     return new EngineCore(paths);
   }
 
-  private now(): number {
+  now(): number {
     return performance.timeOrigin + performance.now() - this.sessionStartEpoch;
   }
 
@@ -556,6 +563,24 @@ export class EngineCore implements Engine {
 
     const view = buildView({ url, title, tree }, params);
     return { text: formatView(view, { urls: params.urls }), data: this.maskData(view) };
+  }
+
+  /** The text a person sees, which `view` leaves out: a region's, or one
+   * element's. Masked like every other output. */
+  async read(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(ReadParamsSchema, rawParams);
+    const page = await this.ensureAlive();
+    const opts: ReadOptions = { region: params.region, find: params.find, max: params.max, timeoutMs: this.config.timeoutMs };
+    if (params.ref !== undefined) {
+      // The ref table lives in the snapshot that minted it; take one so a ref
+      // from the last `view` still resolves.
+      await page.ariaSnapshotJSON({ mode: 'ai' });
+      opts.locator = await this.resolveRef(page, params.ref);
+    }
+    const result = await readText(page, opts);
+    const text = this.secrets.mask(result.text);
+    const header = `${page.url()} · «${await this.safeTitle(page)}» · ${result.region} · ${result.chars} chars`;
+    return { text: `${header}\n${text}`, data: { url: page.url(), region: result.region, chars: result.chars, truncated: result.truncated, text } };
   }
 
   /** Resolves a ref against the page's current aria tree. Callers must have

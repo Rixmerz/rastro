@@ -451,6 +451,28 @@ export function startFixtureServer(): Promise<FixtureServer> {
       }
       if (method === 'GET' && p === '/api/ping') return sendJson(res, { ok: true });
 
+      // A page whose own script POSTs on load, the way Moodle and Outlook do.
+      if (method === 'GET' && p === '/chatty') {
+        return sendHtml(res, page('Chatty', `<main><p>hola</p></main><script>fetch('/api/save', { method: 'POST', body: '{}' })</script>`));
+      }
+
+      // A mail client in miniature: the list is interactive, the body is
+      // plain text that the minimal view never lists.
+      if (method === 'GET' && p === '/mail') {
+        return sendHtml(
+          res,
+          page(
+            'Correo',
+            `<aside aria-label="Lista"><ul role="listbox" aria-label="Lista de mensajes">
+<li role="option" aria-selected="true">No leído Nicol EV.2 Backend</li>
+<li role="option">Capacitación</li></ul></aside>
+<main><h1>EV.2 Backend</h1>
+<p>Hola profe, ¿qué nota me puso en la EV.2?</p>
+<p>Quedo atenta. Saludos, Nicol</p></main>`,
+          ),
+        );
+      }
+
       // Moodle's file picker uploads by posting a multipart form into an
       // iframe: CDP reports no body for that request at all.
       if (method === 'GET' && p === '/iframe-upload') {

@@ -75,7 +75,7 @@ steps:
           name: "Accept"
 ```
 
-The step kind is the step's own key (`open:`, `click:`, `fill:`, ...), not a separate `kind:` field — the value under that key is the target/URL/condition the kind expects. `target`, `value`, `expect`, `then`, `else`, `id`, `note` are sibling fields at the same level.
+The step kind is the step's own key (`open:`, `click:`, `fill:`, ...), not a separate `kind:` field — the value under that key is the target/URL/condition the kind expects. `target`, `value`, `expect`, `then`, `else`, `as`, `id`, `note` are sibling fields at the same level.
 
 ### Step kinds
 
@@ -99,6 +99,30 @@ The step kind is the step's own key (`open:`, `click:`, `fill:`, ...), not a sep
 | `wait: {...}` | `text` / `url` / `ms` | Wait for text, URL change, or milliseconds |
 | `assert: {...}` | `text` / `url` / `request` | Assert text, URL, or request matched |
 | `if: {...}`, `then:`, `else:` | condition + sibling step lists | Conditional execution |
+| `read: {...}`, `as:` | `region` or `target`, optional `find`, `max` | Page text as an output named by `as` |
+| `capture: {...}`, `as:` | `request` pattern, optional `json` path, `fields` | JSON of a response of the run as an output |
+
+### Steps that return data
+
+A routine that only reads still has to hand something back. `read` takes the
+text a person sees (what `rastro read` returns); `capture` takes the JSON a
+request of the run answered with, which is cleaner than any markup:
+
+```yaml
+- open: https://mail.example/inbox
+- capture:
+    request: "POST /owa/service.svc?action=FindConversation* 2xx"   # a query in the path is matched too
+    json: Body.Conversations          # dotted names, [n], [*] over arrays
+    fields: { from: From.Name, subject: Topic }
+  as: inbox
+- read: { region: main, find: "{{subject}}" }
+  as: body
+```
+
+Outputs come back in the run's result, masked. `capture` waits for a matching
+response with a body and fails the step, naming the pattern, if none comes. A
+flow with a `capture` can be linked to HTTP and returns the same output there;
+a flow with a `read` cannot (page text needs a page).
 
 ### Target locator
 

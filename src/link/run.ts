@@ -12,6 +12,8 @@ import type { WriteRecord } from '../routines/result.ts';
 import { bareOf } from '../routines/result.ts';
 import { extractInput, readJsonPath } from './compile.ts';
 import type { CookieJar } from './jar.ts';
+import { matchesRequestPattern } from '../flow/format.ts';
+import { project, selectJson } from '../flow/json-path.ts';
 import { fill, fillDeep, isWriteRequest, type ExtractRule, type Recipe, type RecipeRequest, type Resolve } from './recipe.ts';
 
 export interface HttpRunOptions {
@@ -26,6 +28,7 @@ export interface HttpRunOptions {
 
 export interface HttpRunResult {
   ok: boolean;
+  outputs?: Record<string, unknown>;
   requestsSent: number;
   writes: WriteRecord[];
   finalUrl?: string;
@@ -93,6 +96,8 @@ export async function runRecipe(recipe: Recipe, opts: HttpRunOptions): Promise<H
   let landing: string | undefined;
   let sent = 0;
 
+  // Every replayed response, for the recipe's captures at the end.
+  const responses: { method: string; url: string; status: number; body: string }[] = [];
   const resolve: Resolve = (name) => (name.startsWith('cookie:') ? opts.jar.get(name.slice(7), currentUrl) : vars[name]);
 
   for (const req of recipe.requests) {
@@ -143,6 +148,7 @@ export async function runRecipe(recipe: Recipe, opts: HttpRunOptions): Promise<H
 
       const text = await res.text();
       if (!req.xhr) landing = currentUrl;
+      responses.push({ method: req.method, url: requestUrl, status: first.status, body: text });
       const got = `${Math.floor(first.status / 100)}xx`;
       if (req.expect && got !== req.expect) {
         const where = first.headers.get('location');
@@ -162,5 +168,25 @@ export async function runRecipe(recipe: Recipe, opts: HttpRunOptions): Promise<H
       return { ok: false, requestsSent: sent, writes, finalUrl: landing ?? currentUrl, failedRequest: req.id, reason, beforeWrite: writes.length === 0 };
     }
   }
-  return { ok: true, requestsSent: sent, writes, finalUrl: landing ?? currentUrl };
+  const result: HttpRunResult = { ok: true, requestsSent: sent, writes, finalUrl: landing ?? currentUrl };
+  if (recipe.outputs && recipe.outputs.length > 0) {
+    const outputs: Record<string, unknown> = {};
+    for (const spec of recipe.outputs) {
+      const pattern = fill(spec.request, resolve);
+      const match = responses.filter((r) => matchesRequestPattern(pattern, r)).at(-1);
+      let value: unknown;
+      try {
+        value = match ? JSON.parse(match.body) : undefined;
+      } catch {
+        value = undefined;
+      }
+      if (value !== undefined && spec.json !== undefined) value = selectJson(value, spec.json);
+      if (value === undefined) {
+        return { ...result, ok: false, failedRequest: spec.as, reason: `capture ${spec.as}: no JSON from ${pattern} in the replay`, beforeWrite: writes.length === 0 };
+      }
+      outputs[spec.as] = spec.fields ? project(value, spec.fields) : value;
+    }
+    result.outputs = outputs;
+  }
+  return result;
 }

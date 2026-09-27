@@ -272,6 +272,25 @@ Routines are read from `./.rastro/flows/` (when it exists) **and**
 `~/.config/rastro/flows/`, project first, with collisions reported, or from
 `RASTRO_FLOWS` (colon-separated).
 
+## Reading, and routines that return data
+
+`view` lists what can be acted on; a mail body or a paragraph is not in it.
+`rastro read` returns the text a person sees:
+
+```bash
+rastro read                       # the main region, or the whole page
+rastro read --region aside        # a region by the view's names
+rastro read --ref e42             # one element
+rastro read --find "EV.2"         # the lines around a word
+```
+
+Routines return data with two steps that name an output with `as`: `read`
+(page text) and `capture` (the JSON a request of the run answered with; a
+request pattern can include the query, `POST /owa/service.svc?action=GetItem*
+2xx`, and `json` takes dotted names, `[n]` and `[*]`, with `fields` to project
+each element). The result carries the outputs, masked. A `capture` survives
+`flow link` and comes back from an HTTP replay too; a `read` does not link.
+
 ## Linking a flow to its HTTP calls
 
 `rastro flow link` turns a routine into plain HTTP requests, so it runs without

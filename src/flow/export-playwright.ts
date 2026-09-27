@@ -1,7 +1,7 @@
 // Turns a Flow into a @playwright/test spec file. Pure string generation:
 // no filesystem access, no Playwright import.
 
-import type { Condition, Expect, Flow, FlowParam, FlowStep, Target } from './format.ts';
+import type { CaptureSpec, Condition, Expect, Flow, FlowParam, FlowStep, ReadSpec, Target } from './format.ts';
 import { parseRequestPattern, stepKind } from './format.ts';
 
 // The suffix appended to a URL-assertion path so a path match doesn't also
@@ -230,6 +230,21 @@ function emitStep(step: FlowStep, indent: string, resp: RespCounter): string[] {
       return emitAssert(indent, raw['assert'] as Condition);
     case 'if':
       return emitIf(indent, step as unknown as { if: Condition; then: FlowStep[]; else?: FlowStep[] }, resp);
+    case 'read': {
+      const spec = raw['read'] as ReadSpec;
+      const source = spec.target
+        ? bundleToLocator(spec.target)
+        : spec.region === undefined || spec.region === 'main'
+          ? `page.getByRole('main').or(page.locator('body')).first()`
+          : `page.locator('body')`;
+      return [`${indent}const ${step.as!} = await ${source}.innerText();`];
+    }
+    case 'capture': {
+      // The response has to be awaited before the action that causes it, which
+      // a straight translation cannot place; say so instead of guessing.
+      const spec = raw['capture'] as CaptureSpec;
+      return [`${indent}// capture ${step.as!}: JSON of ${spec.request}${spec.json ? ` at ${spec.json}` : ''} (not exported: wrap the causing action in page.waitForResponse)`];
+    }
   }
 }
 

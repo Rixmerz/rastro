@@ -84,6 +84,7 @@ export const USAGE: Record<string, string> = {
   forward: 'rastro forward',
   reload: 'rastro reload',
   view: 'rastro view [--region r] [--all] [--urls] [--find text]',
+  read: 'rastro read [--region r] [--ref e5] [--find text] [--max n]',
   act: 'rastro act <ref> <kind> [value] [--secret]',
   click: 'rastro click <ref>',
   fill: 'rastro fill <ref> <value> [--secret]',
@@ -134,7 +135,7 @@ usage: rastro [-s|--session name] [--json] <command> [args]
 
 commands:
   open, goto, back, forward, reload
-  view, act (click, fill, type, press, select, check, uncheck, hover, dblclick, scroll, upload)
+  view, read, act (click, fill, type, press, select, check, uncheck, hover, dblclick, scroll, upload)
   detail, history, effects, trace, request, snapshot, screenshot
   console, cookies, storage, tabs, eval, replay, export
   record start|stop, flow save|run|link|export|import

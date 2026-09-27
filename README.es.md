@@ -231,6 +231,25 @@ herramienta por rutina verificada, actualizada en vivo cuando cambian los
 archivos. `--routines-only` deja al agente solo con rutinas verificadas;
 `--routines=catalog` deja solo las dos fijas; `--routines=off` las quita.
 
+## Leer, y rutinas que devuelven datos
+
+`view` lista lo que se puede accionar; el cuerpo de un correo o un párrafo no
+está ahí. `rastro read` devuelve el texto que ve una persona:
+
+```bash
+rastro read                       # la región main, o la página completa
+rastro read --region aside        # una región, con los nombres de view
+rastro read --ref e42             # un elemento
+rastro read --find "EV.2"         # las líneas alrededor de una palabra
+```
+
+Las rutinas devuelven datos con dos pasos que nombran su salida con `as`:
+`read` (texto de la página) y `capture` (el JSON con que respondió una request
+de la corrida; el patrón admite la query y `json` acepta nombres con punto,
+`[n]` y `[*]`, con `fields` para proyectar cada elemento). El resultado trae las
+salidas, enmascaradas. Un `capture` sobrevive a `flow link` y vuelve también
+desde la réplica HTTP; un `read` no se puede enlazar.
+
 ## Enlazar un flow a sus llamadas HTTP
 
 `rastro flow link` convierte una rutina en requests HTTP directos, así corre

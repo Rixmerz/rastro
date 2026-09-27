@@ -38,6 +38,7 @@ export async function createEngine(_session: string): Promise<Engine & { shutdow
     'flowRun',
     'routineRun',
     'flowLink',
+    'read',
     'flowExport',
     'flowImport',
     'status',

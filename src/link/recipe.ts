@@ -43,12 +43,21 @@ export interface RecipeRequest {
   extract?: Record<string, ExtractRule>;
 }
 
+/** A flow's `capture` step, applied to the replayed responses. */
+export interface RecipeOutput {
+  as: string;
+  request: string;
+  json?: string;
+  fields?: Record<string, string>;
+}
+
 export interface Recipe {
   flow: string;
   /** sha256 of the flow file this was compiled from: a mismatch means stale. */
   flowHash: string;
   params: string[];
   requests: RecipeRequest[];
+  outputs?: RecipeOutput[];
   warnings?: string[];
 }
 
@@ -87,6 +96,16 @@ const recipeSchema = z.strictObject({
   flowHash: z.string().regex(/^[0-9a-f]{64}$/),
   params: z.array(z.string()),
   requests: z.array(requestSchema).min(1),
+  outputs: z
+    .array(
+      z.strictObject({
+        as: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/),
+        request: z.string(),
+        json: z.string().optional(),
+        fields: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .optional(),
   warnings: z.array(z.string()).optional(),
 });
 

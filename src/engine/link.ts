@@ -7,10 +7,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { RequestRecord, RpcResult } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
-import { parseFlow, stepKind, type FlowStep } from '../flow/format.ts';
+import { parseFlow, stepKind, type CaptureSpec, type FlowStep } from '../flow/format.ts';
 import { runFlow } from '../flow/runner.ts';
 import { compileRecipe, NotLinkable } from '../link/compile.ts';
-import { recipeHosts, recipePathFor, stringifyRecipe } from '../link/recipe.ts';
+import { recipeHosts, recipePathFor, stringifyRecipe, type RecipeOutput } from '../link/recipe.ts';
 import { resolveRunValues } from '../routines/params.ts';
 import { contentHash } from '../routines/state.ts';
 import type { EngineCore } from './engine.ts';
@@ -48,6 +48,23 @@ function expectedRequests(steps: FlowStep[]): string[] {
     }
   }
   return out;
+}
+
+function allSteps(steps: FlowStep[]): FlowStep[] {
+  return steps.flatMap((step) => {
+    const raw = step as unknown as Record<string, unknown>;
+    return stepKind(step) === 'if' ? [step, ...allSteps(raw['then'] as FlowStep[]), ...allSteps((raw['else'] as FlowStep[] | undefined) ?? [])] : [step];
+  });
+}
+
+function hasStep(steps: FlowStep[], kind: 'read'): boolean {
+  return allSteps(steps).some((s) => stepKind(s) === kind);
+}
+
+function captureSteps(steps: FlowStep[]): RecipeOutput[] {
+  return allSteps(steps)
+    .filter((s) => stepKind(s) === 'capture')
+    .map((s) => ({ as: s.as!, ...(s as unknown as { capture: CaptureSpec }).capture }));
 }
 
 export async function linkFlow(core: EngineCore, input: FlowLinkInput): Promise<RpcResult> {
@@ -104,6 +121,8 @@ export async function linkFlow(core: EngineCore, input: FlowLinkInput): Promise<
       cookies,
       containsSecret: (t) => core.secrets.mask(t) !== t,
       expected: expectedRequests(flow.steps),
+      captures: captureSteps(flow.steps),
+      readsPage: hasStep(flow.steps, 'read'),
     });
   } catch (err) {
     if (err instanceof NotLinkable) throw new RastroError(`not linkable: ${err.message}`, 'the flow keeps running in the browser');

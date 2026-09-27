@@ -20,7 +20,7 @@ Navigation and actions use refs that expire after the page changes; run `view` a
 
 ## Base commands
 
-**Page state:** `view [--find text]` (interactive elements only, grouped by landmark), `history [--limit n]` (one-line per action).
+**Page state:** `view [--find text]` (interactive elements only, grouped by landmark), `read [--region r] [--ref e5] [--find text]` (the text a person sees: a mail body, a paragraph; `view` never lists it), `history [--limit n]` (one-line per action).
 
 **Actions:** `click <ref>`, `fill <ref> <value>`, `type <ref> <value>`, `press <ref|-> <key>`, `check <ref>`, `hover <ref>`. Every action waits for the page to settle (500 ms quiet) before returning.
 

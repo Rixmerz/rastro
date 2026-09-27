@@ -127,7 +127,7 @@ export function serverInstructions(exposure: RoutineExposure, routinesOnly: bool
     'Some replay over plain HTTP without a browser. ' +
     'Read its result: "retry is safe" means nothing was written; "a write was sent: do NOT retry" or "still running" means check the site or rastro_history before any new attempt.';
   const browser =
-    'For anything no routine covers: rastro_open (with allowWrite for hosts that must receive writes), rastro_view, rastro_act; ' +
+    'For anything no routine covers: rastro_open (with allowWrite for hosts that must receive writes), rastro_view to act, rastro_read for the text a page says (view lists only what can be acted on), rastro_act; ' +
     'each action returns a one-line effect summary, and rastro_effects / rastro_trace / rastro_request dig into what it caused.';
   if (exposure === 'off') return browser;
   if (routinesOnly) return `${routines} This server exposes routines only.`;
@@ -196,6 +196,13 @@ export function createMcpServer(
     'Views the current page as a minimal accessibility tree, optionally filtered.',
     { region: z.string().optional(), find: z.string().optional(), urls: z.boolean().optional() },
     (a) => ({ method: 'view', params: { region: a.region, find: a.find, urls: a.urls } }),
+  );
+
+  register(
+    'rastro_read',
+    'Reads the visible text view leaves out (a mail body, a paragraph): of main, a region, one ref, or lines around a word.',
+    { region: z.string().optional(), ref: z.string().optional(), find: z.string().optional(), max: z.number().int().positive().optional() },
+    (a) => ({ method: 'read', params: { region: a.region, ref: a.ref, find: a.find, max: a.max } }),
   );
 
   register(

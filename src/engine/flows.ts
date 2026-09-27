@@ -20,6 +20,7 @@ import { installRastroCapture } from '../flow/capture-script.ts';
 import { runFlow, type FlowRunnerCore } from '../flow/runner.ts';
 import { contentHash, markVerified } from '../routines/state.ts';
 import { recipeFileHosts, recipePathFor } from '../link/recipe.ts';
+import { formatOutputs } from '../routines/result.ts';
 import type { EngineCore } from './engine.ts';
 
 const RecordStartSchema = z.object({
@@ -374,7 +375,7 @@ export class FlowController {
       const recipeFile = recipePathFor(params.file);
       if (existsSync(recipeFile)) await this.core.exportCookieJar(recipeFileHosts(recipeFile));
     }
-    return { text: result.lines.join('\n'), data: result };
+    return { text: [...result.lines, ...formatOutputs(result.outputs)].join('\n'), data: result };
   }
 
   async flowExport(rawParams: Record<string, unknown>): Promise<RpcResult> {

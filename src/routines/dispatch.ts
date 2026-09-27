@@ -88,12 +88,13 @@ async function runOverHttp(routine: Routine, params: Record<string, unknown>, se
   if (!http.ok) {
     if (http.failedRequest) result.failedStep = http.failedRequest;
     result.reason = http.reason ?? 'unknown error';
-    result.retrySafe = http.beforeWrite === true;
+    result.retrySafe = http.beforeWrite === true || (routine.tool.effect === 'read' && http.writes.every((w) => w.xhr === true));
   }
 
   // Nothing a replay prints may carry a secret the routine resolved.
   const registry = new SecretRegistry();
   for (const name of secret) registry.add(values[name]!);
+  if (http.outputs) result.outputs = JSON.parse(registry.mask(JSON.stringify(http.outputs))) as Record<string, unknown>;
   if (result.reason) result.reason = registry.mask(result.reason);
   if (result.finalUrl) result.finalUrl = registry.mask(result.finalUrl);
 

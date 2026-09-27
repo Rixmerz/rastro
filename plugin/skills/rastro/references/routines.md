@@ -33,6 +33,10 @@ verified or not, runs through `rastro_routine_run { name, params }`.
   not fit (usually an expired session) and the browser ran it instead. Nothing
   to do.
 
+A routine that reads (an inbox, a timetable) prints its outputs after the `ok`
+line: a text as a block, a list one JSON line per item. Those are the answer;
+there is no need to browse to confirm them.
+
 ## Making a routine
 
 1. Record or write the flow; save it under a clean name (`publish-file.yaml`).
@@ -41,9 +45,12 @@ verified or not, runs through `rastro_routine_run { name, params }`.
    `allowUpload` dirs, and `login` + `loginWhen` if the site logs you out.
 3. Type every parameter (`type`, `description`, `example`); secrets come from
    the keyring with `from: secret:<name>`, never as parameters.
-4. Turn a judgment call into a parameter (the section number) or leave it out
+4. To return data, end with a `capture` (JSON of a response: preferred, and it
+   works over HTTP) or a `read` (page text) step named with `as`; see
+   `flows.md`.
+5. Turn a judgment call into a parameter (the section number) or leave it out
    of the routine. A routine must work from a cold start.
-5. Run it once: `rastro routine run <name> ...`. A successful run of these exact
+6. Run it once: `rastro routine run <name> ...`. A successful run of these exact
    bytes verifies it; any edit sends it back to probation.
 
 `rastro routine list` warns about generated css ids (`#ext-gen51`),

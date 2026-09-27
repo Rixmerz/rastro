@@ -109,6 +109,18 @@ function dispatch(command: string, argv: string[]): Dispatch {
         params: { region: str(values.region), all: bool(values.all), urls: bool(values.urls), find: str(values.find) },
       };
     }
+    case 'read': {
+      const { values } = sub(argv, {
+        region: { type: 'string' },
+        ref: { type: 'string' },
+        find: { type: 'string' },
+        max: { type: 'string' },
+      });
+      return {
+        method: 'read',
+        params: { region: str(values.region), ref: str(values.ref), find: str(values.find), max: toNumber(str(values.max), '--max') },
+      };
+    }
     case 'act': {
       const { values, positionals } = sub(argv, { secret: { type: 'boolean' } });
       const ref = requirePositional(positionals, 0, 'ref', USAGE.act ?? '');

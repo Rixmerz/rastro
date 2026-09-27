@@ -139,6 +139,7 @@ export async function runRoutineInBrowser(core: EngineCore, input: RoutineRunInp
     writes,
     verified: run.ok || isVerified(hash),
   };
+  if (run.outputs) result.outputs = run.outputs;
   const finalUrl = currentUrl(core);
   if (finalUrl) result.finalUrl = finalUrl;
   if (lastAction >= firstAction) result.actions = { first: firstAction, last: lastAction };
@@ -154,7 +155,9 @@ export async function runRoutineInBrowser(core: EngineCore, input: RoutineRunInp
     } else {
       result.reason = run.reason ?? 'unknown error';
     }
-    result.retrySafe = writes.length === 0;
+    // A read routine that only saw page-script POSTs (Moodle and Outlook send
+    // them on their own while a capture waits) wrote nothing a retry repeats.
+    result.retrySafe = writes.length === 0 || (tool.effect === 'read' && writes.every((w) => w.xhr === true));
   }
 
   recordRun(name, { at: new Date().toISOString(), ok: run.ok, engine: 'browser', hash, ...(run.ok ? {} : { reason: result.reason ?? '' }) });

@@ -540,7 +540,13 @@ export class Recorder {
     if (e.request.postData !== undefined) rec.postData = e.request.postData;
     else if (e.request.hasPostData && !e.redirectResponse) {
       const body = this.takeRouteBody(e.request.method, e.request.url);
-      if (body !== undefined) rec.postData = body;
+      if (body !== undefined) {
+        rec.postData = body;
+      } else {
+        this.bodilessRequests.delete(`${e.request.method} ${e.request.url}`);
+        this.bodilessRequests.set(`${e.request.method} ${e.request.url}`, e.requestId);
+        if (this.bodilessRequests.size > 200) this.bodilessRequests.delete(this.bodilessRequests.keys().next().value!);
+      }
     }
     if (redirectedFrom !== undefined) rec.redirectedFrom = redirectedFrom;
 
@@ -617,22 +623,28 @@ export class Recorder {
    * CDP had not reported yet. Keyed by method and URL, oldest first. */
   private readonly routeBodies = new Map<string, string[]>();
 
+  /** Requests CDP reported with a body it did not include, by method and URL,
+   * waiting for the router's copy. Bounded: only the recent ones matter. */
+  private readonly bodilessRequests = new Map<string, string>();
+
   /** Gives a write's body to its request record when CDP left it out. The
    * router and CDP report the same request independently, so whichever comes
    * second completes the record. */
   noteWriteBody(method: string, url: string, body: string): void {
     if (Buffer.byteLength(body) > MAX_BODY_BYTES) return;
-    const since = this.now() - 30_000;
-    const rec = this.store
-      .requests({ since })
-      .reverse()
-      .find((r) => r.method === method && r.url === url && r.postData === undefined && r.redirectedFrom === undefined);
-    if (rec) {
-      rec.postData = body;
-      this.store.upsertRequest(rec);
-      return;
-    }
     const key = `${method} ${url}`;
+    // Looked up, not scanned: this runs on every allowed write, and a chatty
+    // app (Outlook) sends hundreds.
+    const cdpId = this.bodilessRequests.get(key);
+    if (cdpId !== undefined) {
+      this.bodilessRequests.delete(key);
+      const rec = this.store.getRequestByCdpId(cdpId);
+      if (rec && rec.postData === undefined) {
+        rec.postData = body;
+        this.store.upsertRequest(rec);
+        return;
+      }
+    }
     const queue = this.routeBodies.get(key) ?? [];
     queue.push(body);
     // Only the last few matter; an endless queue would be a leak.

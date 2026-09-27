@@ -23,6 +23,24 @@ export interface Condition {
 interface StepBase {
   id?: string;
   note?: string;
+  /** Names the output a `read` or `capture` step produces. */
+  as?: string;
+}
+
+/** Text of a region (the view's names) or of one target, like `rastro read`. */
+export interface ReadSpec {
+  region?: string;
+  target?: Target;
+  find?: string;
+  max?: number;
+}
+
+/** JSON from a response of the run: a request pattern (its path may carry a
+ * query), then an optional path and projection. */
+export interface CaptureSpec {
+  request: string;
+  json?: string;
+  fields?: Record<string, string>;
 }
 
 export type FlowStep = StepBase &
@@ -45,6 +63,8 @@ export type FlowStep = StepBase &
     | { wait: { text?: string; url?: string; ms?: number } }
     | { assert: Condition }
     | { if: Condition; then: FlowStep[]; else?: FlowStep[] }
+    | { read: ReadSpec }
+    | { capture: CaptureSpec }
   );
 
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean' | 'path' | 'url';
@@ -104,11 +124,13 @@ export type StepKind =
   | 'press'
   | 'wait'
   | 'assert'
-  | 'if';
+  | 'if'
+  | 'read'
+  | 'capture';
 
 const STEP_KINDS: readonly StepKind[] = [
   'open', 'goto', 'back', 'forward', 'reload', 'click', 'dblclick', 'hover', 'check',
-  'uncheck', 'fill', 'type', 'select', 'upload', 'press', 'wait', 'assert', 'if',
+  'uncheck', 'fill', 'type', 'select', 'upload', 'press', 'wait', 'assert', 'if', 'read', 'capture',
 ];
 
 export function stepKind(step: FlowStep): StepKind {
@@ -274,6 +296,44 @@ function parseWait(raw: unknown, path: string): { text?: string; url?: string; m
   return parsed.data;
 }
 
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function parseRead(raw: unknown, path: string): ReadSpec {
+  const obj = requireObject(raw, path);
+  const allowed = ['region', 'target', 'find', 'max'];
+  const extra = Object.keys(obj).find((k) => !allowed.includes(k));
+  if (extra) throw new Error(`${path}: unknown field ${extra}`);
+  const spec: ReadSpec = {};
+  if (obj['region'] !== undefined) spec.region = parseStringValue(obj['region'], `${path}.region`);
+  if (obj['target'] !== undefined) spec.target = parseTarget(obj['target'], `${path}.target`);
+  if (obj['find'] !== undefined) spec.find = parseStringValue(obj['find'], `${path}.find`);
+  if (obj['max'] !== undefined) {
+    if (typeof obj['max'] !== 'number' || !Number.isInteger(obj['max']) || obj['max'] <= 0) throw new Error(`${path}.max: expected a positive integer`);
+    spec.max = obj['max'];
+  }
+  if (spec.region !== undefined && spec.target !== undefined) throw new Error(`${path}: give region or target, not both`);
+  return spec;
+}
+
+function parseCapture(raw: unknown, path: string): CaptureSpec {
+  const obj = requireObject(raw, path);
+  const extra = Object.keys(obj).find((k) => !['request', 'json', 'fields'].includes(k));
+  if (extra) throw new Error(`${path}: unknown field ${extra}`);
+  const request = parseStringValue(obj['request'], `${path}.request`);
+  try {
+    parseRequestPattern(request);
+  } catch (err) {
+    throw new Error(`${path}.request: ${(err as Error).message}`, { cause: err });
+  }
+  const spec: CaptureSpec = { request };
+  if (obj['json'] !== undefined) spec.json = parseStringValue(obj['json'], `${path}.json`);
+  if (obj['fields'] !== undefined) {
+    const fields = requireObject(obj['fields'], `${path}.fields`);
+    spec.fields = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, parseStringValue(v, `${path}.fields.${k}`)]));
+  }
+  return spec;
+}
+
 function detectKind(obj: Record<string, unknown>, path: string): StepKind {
   const present = STEP_KINDS.filter((kind) => kind in obj);
   if (present.length === 0) {
@@ -361,6 +421,20 @@ function parseStep(raw: unknown, path: string): FlowStep {
       }
       break;
     }
+    case 'read':
+      step = { read: parseRead(obj['read'], stepPath) };
+      break;
+    case 'capture':
+      step = { capture: parseCapture(obj['capture'], stepPath) };
+      break;
+  }
+
+  if (kind === 'read' || kind === 'capture') {
+    const as = obj['as'];
+    if (typeof as !== 'string' || !IDENTIFIER.test(as)) throw new Error(`${path}.as: a ${kind} step names its output with an identifier`);
+    step.as = as;
+  } else if (obj['as'] !== undefined) {
+    throw new Error(`${path}.as: only read and capture steps produce an output`);
   }
 
   if (obj['expect'] !== undefined) {
@@ -403,6 +477,23 @@ export function parseFlow(text: string): Flow {
   if (!Array.isArray(stepsRaw)) throw new Error('steps: expected a list of steps');
   const steps = stepsRaw.map((s, i) => parseStep(s, `steps[${i}]`));
 
+  // Output names are constants in an exported test and keys in a result:
+  // unique, and never a parameter's name.
+  const seen = new Set<string>();
+  const checkOutputs = (list: FlowStep[]): void => {
+    for (const step of list) {
+      if (step.as !== undefined) {
+        if (seen.has(step.as)) throw new Error(`output ${step.as}: named twice`);
+        if (params && step.as in params) throw new Error(`output ${step.as}: already a param name`);
+        seen.add(step.as);
+      }
+      const raw = step as unknown as Record<string, unknown>;
+      if (Array.isArray(raw['then'])) checkOutputs(raw['then'] as FlowStep[]);
+      if (Array.isArray(raw['else'])) checkOutputs(raw['else'] as FlowStep[]);
+    }
+  };
+  checkOutputs(steps);
+
   const flow: Flow = { name: obj['name'], steps };
   if (tool) flow.tool = tool;
   if (params) flow.params = params;
@@ -414,7 +505,7 @@ export function parseFlow(text: string): Flow {
 // ---------------------------------------------------------------------------
 
 // Keys other than the kind key itself, in the order they should appear.
-const REST_KEY_ORDER = ['target', 'value', 'then', 'else', 'expect', 'id', 'note'] as const;
+const REST_KEY_ORDER = ['target', 'value', 'then', 'else', 'expect', 'as', 'id', 'note'] as const;
 
 function orderStep(step: FlowStep): Record<string, unknown> {
   const raw = step as unknown as Record<string, unknown>;
@@ -476,7 +567,7 @@ export function parseRequestPattern(pattern: string): RequestPattern {
 }
 
 function globToRegExp(glob: string): RegExp {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
 }
 
@@ -495,7 +586,17 @@ export function matchesRequestPattern(
   const parsed = parseRequestPattern(pattern);
   if (parsed.method !== request.method.toUpperCase()) return false;
 
-  const pathname = pathnameOf(request.url);
+  // A pattern with a query is matched against path and query: many APIs put
+  // the operation there (`service.svc?action=GetItem`).
+  let pathname = pathnameOf(request.url);
+  if (parsed.path.includes('?')) {
+    try {
+      const u = new URL(request.url);
+      pathname = u.pathname + u.search;
+    } catch {
+      // keep the bare path
+    }
+  }
   const pathMatches = parsed.path.includes('*') ? globToRegExp(parsed.path).test(pathname) : pathname === parsed.path;
   if (!pathMatches) return false;
 

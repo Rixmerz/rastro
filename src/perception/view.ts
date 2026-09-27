@@ -57,7 +57,7 @@ export interface MinimalView {
 /** Landmark roles that introduce a new region for their descendants. `form` is
  * deliberately absent: even a named form stays in whatever region it was
  * already in. */
-const LANDMARK_REGION: Readonly<Record<string, string>> = {
+export const LANDMARK_REGION: Readonly<Record<string, string>> = {
   dialog: 'dialog',
   alertdialog: 'dialog',
   banner: 'header',

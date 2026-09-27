@@ -33,6 +33,8 @@ export interface RoutineResult {
   loginRefreshed?: boolean;
   /** Set when an HTTP attempt gave way to the browser before any write. */
   fellBack?: string;
+  /** What `read` and `capture` steps produced, by name. */
+  outputs?: Record<string, unknown>;
   /** This exact file is now (or already was) verified. */
   verified: boolean;
 }
@@ -67,6 +69,22 @@ function formatWrite(w: WriteRecord): string {
   return `${w.method} ${w.path}${status}${location}`;
 }
 
+/** Outputs as text: a string as its own block, a list one JSON line per
+ * element, anything else as one JSON line. */
+export function formatOutputs(outputs: Record<string, unknown> | undefined): string[] {
+  const lines: string[] = [];
+  for (const [name, value] of Object.entries(outputs ?? {})) {
+    if (typeof value === 'string') {
+      lines.push(`${name}:`, value);
+    } else if (Array.isArray(value)) {
+      lines.push(`${name}: ${value.length} item${value.length === 1 ? '' : 's'}`, ...value.map((v) => JSON.stringify(v)));
+    } else {
+      lines.push(`${name}: ${JSON.stringify(value)}`);
+    }
+  }
+  return lines;
+}
+
 function evidence(result: RoutineResult): string | undefined {
   if (!result.actions) return undefined;
   const { first, last } = result.actions;
@@ -81,6 +99,7 @@ export function formatRoutineResult(result: RoutineResult): string {
   if (result.ok) {
     lines.push(`${result.routine} ok · ${result.stepsRun} steps${via}`);
     if (result.finalUrl) lines.push(`→ ${result.finalUrl}`);
+    lines.push(...formatOutputs(result.outputs));
   } else {
     lines.push(`${result.routine} failed${result.failedStep ? ` at step ${result.failedStep}` : ''}${via}: ${result.reason ?? 'unknown error'}`);
     if (result.finalUrl) lines.push(`page: ${result.finalUrl}`);
