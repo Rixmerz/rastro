@@ -16,6 +16,8 @@ rastro effects 2     # drill down only when needed
 
 Navigation and actions use refs that expire after the page changes; run `view` again after any navigation.
 
+**A long region is collapsed, not missing.** `view` shows the first few elements of each region and then `+N more (… rastro view --region <r> or --find <text>)`. In a web app the content you want (a mail list, a table of rows) is usually in there: expand that region or `--find` the text you expect before deciding it is not on the page. Only a `blocked:` line from Rastro means the page cannot be read.
+
 ## Base commands
 
 **Page state:** `view [--find text]` (interactive elements only, grouped by landmark), `history [--limit n]` (one-line per action).

@@ -5,6 +5,22 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-27
+
+### Fixed — an agent called a working page "blocked"
+
+An agent asked to read a mailbox opened Outlook, found no mail in `view`, and
+reported the page as blocked. The page was fine: the minimal view collapses a
+long region into `+N more (… rastro view --region <r> or --find <text>)`, and
+the message list was in there. It then clicked a skip link outside the
+viewport and waited out a 30-second timeout.
+
+- The skill says a collapsed region is not a missing one, and to expand it or
+  `--find` the expected text before concluding anything.
+- The `navegador` agent is told that only Rastro declares a page blocked, on
+  its own `blocked:` line, and that 404s on images and failed telemetry are
+  noise.
+
 ## [0.2.0] — 2026-09-26
 
 ### Added — routines: saved flows as agent tools
@@ -383,5 +399,6 @@ recording.
   high) fixed in full, each with a regression test. The 5 high ones were secret
   leaks through `--json`, snapshots, HAR and `pw-trace`.
 
+[0.2.1]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.1.0

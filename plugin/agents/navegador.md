@@ -29,7 +29,7 @@ You receive a goal from the caller and an optional session context. Your job is 
 3. **Investigate only when needed.** A summary of `#5 · no effects` means nothing happened; run `rastro view` to check the page state or `rastro trace --action 5` to see all events. Do not load the full page context into the main thread.
 
 4. **Stop on these conditions:**
-   - `blocked: captcha|2fa|bot-block` — the page is not readable; report it.
+   - `blocked: captcha|2fa|bot-block` — the page is not readable; report it. **Only Rastro says a page is blocked**, on its own `blocked:` line. A busy app (Outlook, Moodle) whose content you have not found yet is not blocked: the minimal view collapses long regions into `+N more (… rastro view --region <r> or --find <text>)`, so expand the region it names, or `--find` the text you expect, before concluding anything. 404s on images and failed telemetry are noise, not a broken page.
    - A timeout or crash — report it with the attempted action.
    - The goal is met — report success with evidence ids.
 
