@@ -629,29 +629,52 @@ async function main(): Promise<void> {
   if (command === 'mcp') {
     let routines: string | undefined;
     let routinesOnly: boolean | undefined;
+    let http: { host?: string; port?: number } | undefined;
     try {
-      const { values } = sub(args, { routines: { type: 'string' }, 'routines-only': { type: 'boolean' } });
+      const { values } = sub(args, {
+        routines: { type: 'string' },
+        'routines-only': { type: 'boolean' },
+        http: { type: 'boolean' },
+        host: { type: 'string' },
+        port: { type: 'string' },
+      });
       routines = str(values.routines);
       routinesOnly = bool(values['routines-only']);
       if (routines !== undefined && routines !== 'tools' && routines !== 'catalog' && routines !== 'off') {
         throw new UsageError(`--routines expects tools, catalog or off, got "${routines}"`);
+      }
+      const host = str(values.host);
+      const portText = str(values.port);
+      if (!bool(values.http) && (host !== undefined || portText !== undefined)) {
+        throw new UsageError(`--host and --port need --http\nusage: ${USAGE.mcp}`);
+      }
+      if (bool(values.http)) {
+        http = {};
+        if (host !== undefined) http.host = host;
+        if (portText !== undefined) {
+          const port = Number(portText);
+          if (!/^\d+$/.test(portText) || port > 65535) throw new UsageError(`--port expects a number from 0 to 65535, got "${portText}"`);
+          http.port = port;
+        }
       }
     } catch (err) {
       process.exitCode = printError(err);
       return;
     }
     try {
+      type McpOpts = { routines?: 'tools' | 'catalog' | 'off'; routinesOnly?: boolean; http?: { host?: string; port?: number } };
       // Not a literal specifier: avoids a compile-time dependency on a module
       // owned by src/engine's parallel build (src/mcp/server.ts). The extension
       // has to track this file's own: `.ts` unbuilt, `.js` once shipped.
       const ext = import.meta.filename.endsWith('.ts') ? '.ts' : '.js';
       const specifier = new URL(`../mcp/server${ext}`, import.meta.url).href;
       const mod = (await import(specifier)) as {
-        runMcpServer: (opts: { routines?: 'tools' | 'catalog' | 'off'; routinesOnly?: boolean }) => Promise<void>;
+        runMcpServer: (opts: McpOpts) => Promise<void>;
       };
-      const opts: { routines?: 'tools' | 'catalog' | 'off'; routinesOnly?: boolean } = {};
+      const opts: McpOpts = {};
       if (routines !== undefined) opts.routines = routines as 'tools' | 'catalog' | 'off';
       if (routinesOnly) opts.routinesOnly = true;
+      if (http) opts.http = http;
       await mod.runMcpServer(opts);
     } catch (err) {
       console.error(`error: mcp server unavailable: ${err instanceof Error ? err.message : String(err)}`);
