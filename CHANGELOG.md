@@ -5,6 +5,32 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — MCP over HTTP, and evals that drive it like an agent
+
+Set against Browserbase's MCP server, Rastro's could only be spawned over
+stdio, and its token budgets were never measured through the protocol an agent
+actually uses.
+
+- **`rastro mcp --http`** serves the same tools over Streamable HTTP at
+  `http://127.0.0.1:7713/mcp` (`--host`, `--port`). Every request needs a
+  bearer token (`RASTRO_MCP_TOKEN`, or one generated once and kept 0600 in
+  `mcp-http.token`); the server says where it is and never prints it. On
+  loopback the `Host` header is checked against DNS rebinding; any other
+  address warns. Each client gets its own MCP session and routine watcher, up to 32
+  (least recently used closed first).
+- **`pnpm evals`**: a real `rastro mcp` over stdio and HTTP, a real Chromium
+  and the fixture site, in six scenarios (login and the request it caused,
+  write guard, reading a mail, prompt injection, a large page, a CAPTCHA).
+  Each asserts the outcome, that no secret reaches the agent, and the token
+  budgets, and the run reports what the agent read. `RASTRO_EVAL_OUT` writes
+  it as JSON.
+- The README comparison includes Browserbase MCP.
+
+### Fixed
+
+- The fixture server failed to start on hosts without IPv6 (some CI
+  containers), skipping or failing every browser test. It falls back to IPv4.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added — reading a page, and routines that return what they read

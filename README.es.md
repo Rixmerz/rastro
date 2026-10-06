@@ -12,16 +12,24 @@ Rastro da al agente el mínimo que un humano percibe (qué se puede interactuar 
 
 ## Comparación
 
-| | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura |
-| --- | --- | --- | --- | --- | --- |
-| Qué ve el agente | solo lo interactivo, con refs | snapshot ARIA completo | DOM / CDP crudo | DOM + capturas | DOM filtrado |
-| Tokens por página | **~28-62** (HN 62, Wikipedia 268) | miles | miles | muy alto (visión) | medio |
-| Resumen de efecto por acción | **sí, una línea** | no | no | no | no |
-| Traza causal acción → efecto | **sí, consultable en vivo** | no | traza sin causalidad | no | no |
-| Investigación a demanda | **sí**, por niveles | no | sí, sin filtrar | no | parcial |
-| Seguro sin humano delante | **write guard + mascarado** | no | no | no | no |
-| Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no |
-| Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
+| | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura | Browserbase MCP¹ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Qué ve el agente | solo lo interactivo, con refs | snapshot ARIA completo | DOM / CDP crudo | DOM + capturas | DOM filtrado | lo que un LLM interno responde a `observe` |
+| Tokens por página | **~28-62** (HN 62, Wikipedia 268) | miles | miles | muy alto (visión) | medio | según la respuesta del LLM |
+| Resumen de efecto por acción | **sí, una línea** | no | no | no | no | no (`{success, data}`) |
+| Traza causal acción → efecto | **sí, consultable en vivo** | no | traza sin causalidad | no | no | no |
+| Investigación a demanda | **sí**, por niveles | no | sí, sin filtrar | no | parcial | no (el session replay es para humanos) |
+| Seguro sin humano delante | **write guard + mascarado** | no | no | no | no | no |
+| Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no | no |
+| Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium | Chromium en la nube de Browserbase |
+
+¹ [`browserbase/mcp-server-browserbase`](https://github.com/browserbase/mcp-server-browserbase),
+archivado en julio de 2026; Browserbase remite a su servidor hospedado, que
+mantiene las mismas seis herramientas (`start`, `end`, `navigate`, `act`,
+`observe`, `extract`). Cada `act`/`observe`/`extract` lo resuelve
+[Stagehand](https://github.com/browserbase/stagehand) con un LLM dentro de la
+herramienta (Gemini por defecto): un segundo modelo detrás del del agente, que
+se paga y no es determinista, donde Rastro resuelve refs sin modelo alguno.
 
 Los dos diferenciadores reales son la **atribución causal** (ninguna otra
 herramienta te dice "este click disparó estas 4 peticiones, esta cookie y esta
@@ -29,8 +37,11 @@ navegación", consultable a mitad de tarea) y el **resumen de efecto en una
 línea**, que evita volcar la página entera tras cada acción.
 
 Dónde Rastro **no** es la respuesta: no tiene visión, así que una página que solo
-se entiende por píxeles es terreno de `browser-use`; es solo Chromium; y es
-nuevo, frente a la adopción que ya tiene Playwright MCP.
+se entiende por píxeles es terreno de `browser-use`; detecta los muros anti-bot
+en vez de saltarlos, y corre un navegador por sesión en tu máquina, así que
+proxies, stealth o decenas de navegadores en paralelo en la nube son terreno de
+Browserbase; es solo Chromium; y es nuevo, frente a la adopción que ya tiene
+Playwright MCP.
 
 ## Instalación
 
@@ -316,6 +327,46 @@ claude mcp add rastro
 
 Luego usa las herramientas `rastro` en el panel de herramientas.
 
+## MCP por HTTP
+
+`rastro mcp` habla stdio por defecto. `--http` sirve las mismas herramientas
+por Streamable HTTP, para clientes que se conectan a una URL en vez de lanzar
+un proceso:
+
+```bash
+rastro mcp --http                          # http://127.0.0.1:7713/mcp
+rastro mcp --http --port 9000 --routines-only
+```
+
+```json
+{
+  "mcpServers": {
+    "rastro": {
+      "type": "http",
+      "url": "http://127.0.0.1:7713/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+El servidor maneja tu propio perfil del navegador, así que nunca queda abierto:
+
+- **Cada request necesita el token bearer.** Es `RASTRO_MCP_TOKEN` si está
+  definido; si no, se genera en el primer arranque y se guarda en
+  `~/.local/share/rastro/mcp-http.token` (0600), así la configuración del
+  cliente sobrevive a los reinicios. El servidor imprime dónde está el token,
+  nunca el token.
+- **Loopback por defecto**, con el header `Host` verificado para que una página
+  web no lo alcance por DNS rebinding. `--host 0.0.0.0` (u otra dirección)
+  funciona y avisa: quien lo alcance con el token maneja el perfil.
+- Cada cliente tiene su propia sesión MCP (hasta 32; pasado eso se cierra la
+  usada hace más tiempo y su cliente se inicializa de nuevo); comparten las
+  sesiones del daemon, igual que el CLI. Un daemon atiende una petición a la vez, así que dos
+  clientes trabajando a la par deberían pasar cada uno su `session`.
+- Los exportes y las salidas grandes vuelven como enlaces `file://` de la
+  máquina donde corre el servidor.
+
 ## Exportes
 
 ```bash
@@ -361,7 +412,33 @@ Cada sesión tiene su daemon, perfil del navegador y traza persistente.
 pnpm test                # suite de tests
 pnpm typecheck          # TypeScript
 pnpm lint               # Eslint
+pnpm evals              # evals MCP (necesita un Chromium, ver RASTRO_CHROMIUM)
 ```
+
+### Evals
+
+`pnpm evals` maneja un proceso `rastro mcp` real como lo haría un agente, por
+stdio y por HTTP, contra el sitio de fixtures y un Chromium real: login y
+encontrar el request que causó el click, una escritura que el guard bloquea,
+leer el cuerpo de un mail que el view no muestra, una página que intenta dar
+órdenes, una página con 42 links de navegación y un CAPTCHA. Cada escenario
+verifica el resultado y que ningún secreto llegue al agente, y cada respuesta
+se mide contra los presupuestos del spec (un view como máximo 400 tokens, un
+resumen de acción 40, conectarse 2000). Una corrida imprime lo que el agente
+tuvo que leer:
+
+| escenario | llamadas | tokens leídos |
+| --- | ---: | ---: |
+| login, effects, request como curl, history | 8 | 469 |
+| write guard | 3 | 53 |
+| leer un mail | 4 | 119 |
+| prompt injection | 2 | 44 |
+| página grande | 3 | 92 |
+| captcha | 2 | 31 |
+
+Conectarse cuesta 1579 tokens de esquemas de herramientas más 197 de
+instrucciones. `RASTRO_EVAL_OUT=evals.json pnpm evals` además escribe cada paso
+en JSON.
 
 ## Licencia
 

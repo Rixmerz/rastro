@@ -21,16 +21,24 @@ as a causal trace it can dig into when it matters.
 
 ## Comparison
 
-| | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura |
-| --- | --- | --- | --- | --- | --- |
-| What the agent sees | interactive elements only, with refs | full ARIA snapshot | raw DOM / CDP | DOM + screenshots | filtered DOM |
-| Tokens per page | **~28-62** (HN 62, Wikipedia 268) | thousands | thousands | very high (vision) | medium |
-| Effect summary per action | **yes, one line** | no | no | no | no |
-| Causal action → effect trace | **yes, queryable mid-task** | no | a trace, without causality | no | no |
-| Investigation on demand | **yes**, in levels | no | yes, unfiltered | no | partial |
-| Safe with nobody watching | **write guard + masking** | no | no | no | no |
-| Human recording → script | **yes** (YAML + Playwright export) | separate codegen | Chrome Recorder | no | no |
-| Browser | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
+| | **Rastro** | Playwright MCP | Chrome DevTools MCP | browser-use | Obscura | Browserbase MCP¹ |
+| --- | --- | --- | --- | --- | --- | --- |
+| What the agent sees | interactive elements only, with refs | full ARIA snapshot | raw DOM / CDP | DOM + screenshots | filtered DOM | what an internal LLM answers to `observe` |
+| Tokens per page | **~28-62** (HN 62, Wikipedia 268) | thousands | thousands | very high (vision) | medium | varies with the LLM's answer |
+| Effect summary per action | **yes, one line** | no | no | no | no | no (`{success, data}`) |
+| Causal action → effect trace | **yes, queryable mid-task** | no | a trace, without causality | no | no | no |
+| Investigation on demand | **yes**, in levels | no | yes, unfiltered | no | partial | no (session replay is for humans) |
+| Safe with nobody watching | **write guard + masking** | no | no | no | no | no |
+| Human recording → script | **yes** (YAML + Playwright export) | separate codegen | Chrome Recorder | no | no | no |
+| Browser | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium | Chromium in Browserbase's cloud |
+
+¹ [`browserbase/mcp-server-browserbase`](https://github.com/browserbase/mcp-server-browserbase),
+archived in July 2026; Browserbase points to its hosted server, which keeps
+the same six tools (`start`, `end`, `navigate`, `act`, `observe`, `extract`).
+Each `act`/`observe`/`extract` is resolved by [Stagehand](https://github.com/browserbase/stagehand)
+and an LLM inside the tool (Gemini by default): a second model behind the
+agent's, billed and non-deterministic, where Rastro resolves refs with no model
+at all.
 
 The two real differentiators are **causal attribution** — no other tool tells
 you "this click fired these four requests, this cookie and this navigation",
@@ -38,8 +46,11 @@ queryable half-way through a task — and the **one-line effect summary**, which
 avoids dumping the whole page after every action.
 
 Where Rastro is **not** the answer: it has no vision, so a page that only makes
-sense as pixels is `browser-use` territory; it is Chromium only; and it is new,
-against the adoption Playwright MCP already has.
+sense as pixels is `browser-use` territory; it detects anti-bot walls instead
+of getting past them, and runs one browser per session on your own machine, so
+proxies, stealth or dozens of cloud browsers in parallel are Browserbase
+territory; it is Chromium only; and it is new, against the adoption Playwright
+MCP already has.
 
 ## Install
 
@@ -381,6 +392,45 @@ MCP tools in Claude Code:
 claude mcp add rastro
 ```
 
+## MCP over HTTP
+
+`rastro mcp` speaks stdio by default. `--http` serves the same tools over
+Streamable HTTP, for clients that connect to a URL instead of spawning a
+process:
+
+```bash
+rastro mcp --http                          # http://127.0.0.1:7713/mcp
+rastro mcp --http --port 9000 --routines-only
+```
+
+```json
+{
+  "mcpServers": {
+    "rastro": {
+      "type": "http",
+      "url": "http://127.0.0.1:7713/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+The server drives your own browser profile, so it is never open:
+
+- **Every request needs the bearer token.** It is `RASTRO_MCP_TOKEN` when set;
+  otherwise one is generated on the first run and kept in
+  `~/.local/share/rastro/mcp-http.token` (0600), so a client's configuration
+  survives restarts. The server prints where the token is, never the token.
+- **Loopback by default**, with the `Host` header checked so a web page cannot
+  reach it through DNS rebinding. `--host 0.0.0.0` (or any other address)
+  works and warns: anyone who reaches it with the token drives the profile.
+- Each client gets its own MCP session (up to 32; past that the least
+  recently used is closed and its client initializes again); they share the
+  daemon sessions, like the CLI. A daemon runs one request at a time, so two clients working at once
+  should each pass their own `session`.
+- Exports and large outputs come back as `file://` links to the machine the
+  server runs on.
+
 ## Exports
 
 ```bash
@@ -411,7 +461,31 @@ Each session has its own daemon, browser profile and persistent trace.
 pnpm test                # test suite
 pnpm typecheck           # TypeScript
 pnpm lint                # ESLint
+pnpm evals               # MCP evals (needs a Chromium, see RASTRO_CHROMIUM)
 ```
+
+### Evals
+
+`pnpm evals` drives a real `rastro mcp` process the way an agent would, over
+stdio and over HTTP, against the bundled fixture site and a real Chromium:
+log in and find the request the click caused, a write the guard blocks, read a
+mail body the view leaves out, a page that tries to give orders, a page with 42
+nav links, and a CAPTCHA. Each scenario asserts the outcome and that no secret
+reaches the agent, and every response is held to the budgets in the spec (a
+view at most 400 tokens, an action summary at most 40, connecting at most
+2000). A run prints what the agent had to read:
+
+| scenario | tool calls | tokens read |
+| --- | ---: | ---: |
+| login, effects, request as curl, history | 8 | 469 |
+| write guard | 3 | 53 |
+| read a mail | 4 | 119 |
+| prompt injection | 2 | 44 |
+| large page | 3 | 92 |
+| captcha | 2 | 31 |
+
+Connecting costs 1579 tokens of tool schemas plus 197 of instructions.
+`RASTRO_EVAL_OUT=evals.json pnpm evals` also writes every step as JSON.
 
 ## License
 

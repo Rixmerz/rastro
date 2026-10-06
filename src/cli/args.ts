@@ -126,7 +126,7 @@ export const USAGE: Record<string, string> = {
   'routine run': 'rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
   status: 'rastro status',
   close: 'rastro close',
-  mcp: 'rastro mcp [--routines tools|catalog|off] [--routines-only]',
+  mcp: 'rastro mcp [--routines tools|catalog|off] [--routines-only] [--http [--host 127.0.0.1] [--port 7713]]',
 };
 
 export const TOP_LEVEL_HELP = `rastro — a browser for AI agents

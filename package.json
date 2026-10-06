@@ -46,6 +46,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run",
+    "evals": "vitest run --config vitest.evals.config.ts",
     "lint": "eslint .",
     "prepublishOnly": "npm run build"
   },

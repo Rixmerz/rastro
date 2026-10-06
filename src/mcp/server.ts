@@ -1,11 +1,12 @@
-// MCP server: exposes the daemon's RPC methods as tools over stdio, for
-// agents that speak MCP instead of the CLI.
+// MCP server: exposes the daemon's RPC methods as tools over stdio (or
+// Streamable HTTP, see http.ts), for agents that speak MCP instead of the CLI.
 
 import { extname, basename, join } from 'node:path';
 import { writeFileSync, chmodSync, watch, type FSWatcher } from 'node:fs';
 import { z } from 'zod';
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { isLoopback, resolveToken, startHttpServer } from './http.ts';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { call } from '../daemon/client.ts';
 import { RastroError } from '../core/types.ts';
@@ -526,8 +527,44 @@ export class RoutineTools {
   }
 }
 
-export async function runMcpServer(opts?: { session?: string } & McpServerOptions): Promise<void> {
-  const server = createMcpServer(call, opts?.session ?? process.env.RASTRO_SESSION ?? 'default', opts ?? {});
+export interface HttpOptions {
+  host?: string;
+  port?: number;
+}
+
+export async function runMcpServer(opts?: { session?: string; http?: HttpOptions } & McpServerOptions): Promise<void> {
+  const session = opts?.session ?? process.env.RASTRO_SESSION ?? 'default';
+  if (opts?.http) {
+    await runHttp(session, opts.http, opts);
+    return;
+  }
+  const server = createMcpServer(call, session, opts ?? {});
   await server.connect(new StdioServerTransport());
   routineToolsOf(server)?.watch();
+}
+
+async function runHttp(session: string, http: HttpOptions, opts: McpServerOptions): Promise<void> {
+  const { token, source, path } = resolveToken();
+  const host = http.host ?? '127.0.0.1';
+  const running = await startHttpServer({
+    host,
+    ...(http.port !== undefined ? { port: http.port } : {}),
+    token,
+    createServer: () => createMcpServer(call, session, opts),
+    onSession: (server) => routineToolsOf(server)?.watch(),
+    onSessionClosed: (server) => routineToolsOf(server)?.close(),
+  });
+  // stderr, and never the token itself: whoever launched this may be an agent
+  // whose transcript would then hold it.
+  const where = source === 'env' ? 'RASTRO_MCP_TOKEN' : `${path}${source === 'new' ? ' (new)' : ''}`;
+  console.error(`rastro mcp listening on ${running.url}`);
+  console.error(`clients send "Authorization: Bearer <token>"; the token is in ${where}`);
+  if (!isLoopback(host)) {
+    console.error(`warning: bound to ${host}, not loopback: anyone who reaches it with the token drives this browser profile`);
+  }
+  const stop = (): void => {
+    void running.close().finally(() => process.exit(0));
+  };
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
 }
