@@ -541,9 +541,16 @@ export function startFixtureServer(): Promise<FixtureServer> {
       socket.on('close', () => sockets.delete(socket));
     });
 
-    server.on('error', reject);
+    // Dual-stack so both origins answer; a host without IPv6 (some CI
+    // containers) refuses '::', and there localhost resolves to 127.0.0.1.
+    const onError = (err: NodeJS.ErrnoException): void => {
+      if (err.code === 'EAFNOSUPPORT') server.listen({ port: 0, host: '0.0.0.0' });
+      else reject(err);
+    };
+    server.on('error', onError);
 
-    server.listen({ port: 0, host: '::', ipv6Only: false }, () => {
+    server.listen({ port: 0, host: '::', ipv6Only: false });
+    server.once('listening', () => {
       const address = server.address();
       if (address === null || typeof address === 'string') {
         reject(new Error('fixture server did not bind to a port'));
