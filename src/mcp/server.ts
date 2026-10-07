@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { call } from '../daemon/client.ts';
 import { RastroError } from '../core/types.ts';
+import { toNavigableUrl } from '../core/target.ts';
 import { VERSION } from '../version.ts';
 import type { RpcMethod, RpcResult } from '../core/types.ts';
 import { ensurePrivateDir, routineDirs, routinesStateDir, sessionPaths } from '../core/paths.ts';
@@ -43,6 +44,9 @@ const NAVIGATE_TO = ['goto', 'back', 'forward', 'reload'] as const;
 const EXPORT_FORMATS = ['har', 'perfetto', 'pw-trace'] as const;
 
 const sessionField = z.string().optional().describe('Session to target (defaults to the server session or "default").');
+
+const urlField = z.string().describe('URL, bare host (localhost:3000 opens over http), or path to a local file.');
+const viewportField = z.string().describe('WIDTHxHEIGHT (e.g. 390x844), mobile, tablet, or desktop to reset.');
 
 function resolveSession(input: { session?: string }, defaultSession: string): string {
   return input.session ?? defaultSession;
@@ -175,18 +179,22 @@ export function createMcpServer(
     'rastro_open',
     'Opens the browser session, optionally navigating to a URL.',
     {
-      url: z.string().optional(),
+      url: urlField.optional(),
       allowWrite: z.array(z.string()).optional(),
       allowUpload: z.array(z.string()).optional(),
       headed: z.boolean().optional(),
+      viewport: viewportField.optional(),
+      mobile: z.boolean().optional().describe('Emulate a phone: mobile flag, touch and a mobile user agent.'),
     },
     (a) => ({
       method: 'open',
       params: {
-        url: a.url,
+        url: a.url === undefined ? undefined : toNavigableUrl(a.url as string, process.cwd()),
         allowWrite: dropEmpty(a.allowWrite as string[] | undefined),
         allowUpload: dropEmpty(a.allowUpload as string[] | undefined),
         headed: a.headed,
+        viewport: a.viewport,
+        mobile: a.mobile,
       },
     }),
   );
@@ -215,8 +223,19 @@ export function createMcpServer(
   register(
     'rastro_navigate',
     'Navigates the current tab: go to a URL, or go back, forward, or reload.',
-    { to: z.enum(NAVIGATE_TO), url: z.string().optional() },
-    (a) => ({ method: a.to as RpcMethod, params: { url: a.url } }),
+    { to: z.enum(NAVIGATE_TO), url: urlField.optional() },
+    (a) => ({ method: a.to as RpcMethod, params: { url: a.url === undefined ? undefined : toNavigableUrl(a.url as string, process.cwd()) } }),
+  );
+
+  register(
+    'rastro_viewport',
+    'Shows or changes the screen size every tab renders at, to see a site as a phone or tablet would. No args shows the current one.',
+    {
+      size: viewportField.optional(),
+      mobile: z.boolean().optional().describe('Emulate a phone: mobile flag, touch and a mobile user agent.'),
+      scale: z.number().positive().max(4).optional().describe('Device pixel ratio (default 1).'),
+    },
+    (a) => ({ method: 'viewport', params: { size: a.size, mobile: a.mobile, scale: a.scale } }),
   );
 
   register(

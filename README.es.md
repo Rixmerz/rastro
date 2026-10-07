@@ -91,6 +91,31 @@ rastro request r31 --curl
 #   -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
+## Destinos locales y tamaños de pantalla
+
+`open` y `goto` aceptan más que URLs completas: `localhost:3000` (por http,
+igual que las direcciones privadas), `example.com` (https) y un archivo local
+— `./index.html`, `/ruta/abs.html` o `~/sitio/index.html` — que se convierte
+en una URL `file://` resuelta contra el directorio de tu shell. Una entrada de
+`--allow-write` puede escribirse tal como la copiaste: `localhost:3000` y
+`http://localhost:3000/app` significan el host `localhost`.
+
+```bash
+rastro open localhost:5173 --allow-write localhost:5173 --mobile
+rastro viewport                 # viewport 390x844 mobile
+rastro viewport 820x1180 --mobile
+rastro viewport --scale 2       # mismo tamaño, densidad de píxeles 2
+rastro viewport desktop         # vuelve a 1280x900 (headless) o a la ventana
+```
+
+`viewport` cambia el tamaño de la sesión viva — todas las pestañas, también
+las nuevas y los relanzamientos — sin reiniciar el navegador, así que el login
+y el estado de la página se mantienen. `mobile` y `tablet` son presets;
+`--mobile` agrega el flag móvil (una página sin meta viewport se maqueta a
+980 px, como en un teléfono real), touch y un user agent de Chrome en Android,
+que el servidor ve recién en la siguiente carga. Por MCP es `rastro_viewport`,
+y `rastro_open` acepta `viewport` / `mobile`.
+
 ## Niveles de investigación
 
 | Qué preguntas | Comando | Cuándo |

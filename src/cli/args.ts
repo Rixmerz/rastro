@@ -78,8 +78,9 @@ export interface Dispatch {
 }
 
 export const USAGE: Record<string, string> = {
-  open: 'rastro open [url] [--headed] [--allow-write h1,h2] [--allow-upload dir,dir] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n]',
-  goto: 'rastro goto <url>',
+  open: 'rastro open [url] [--headed] [--allow-write h1,h2] [--allow-upload dir,dir] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n] [--viewport WxH|mobile|tablet] [--mobile]',
+  goto: 'rastro goto <url|host|file>',
+  viewport: 'rastro viewport [WxH|mobile|tablet|desktop] [--mobile] [--scale n]',
   back: 'rastro back',
   forward: 'rastro forward',
   reload: 'rastro reload',
@@ -137,7 +138,7 @@ commands:
   open, goto, back, forward, reload
   view, read, act (click, fill, type, press, select, check, uncheck, hover, dblclick, scroll, upload)
   detail, history, effects, trace, request, snapshot, screenshot
-  console, cookies, storage, tabs, eval, replay, export
+  console, cookies, storage, tabs, viewport, eval, replay, export
   record start|stop, flow save|run|link|export|import
   routine list|show|run
   secret set|list|rm

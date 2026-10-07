@@ -659,6 +659,67 @@ describe('reopen applies params live', () => {
   );
 });
 
+describe('local targets', () => {
+  test(
+    'an absolute file path opens as a file URL, and an allowlist written with the port lets the write through',
+    async () => {
+      const engine = await createEngine(nextSession('local-targets'));
+      const dir = mkdtempSync(join(tmpdir(), 'rastro-local-file-'));
+      const file = join(dir, 'index.html');
+      writeFileSync(file, '<title>local</title><button>Hola</button>');
+      try {
+        const opened = await engine.open({ url: file });
+        expect(opened.text).not.toMatch(/invalid URL/i);
+        expect((await engine.eval({ expr: 'location.protocol' })).data).toBe('file:');
+
+        // `127.0.0.1:PORT` is how people copy a dev server's address; the
+        // request's host never carries the port, so it used to never match.
+        await engine.open({ url: `${server.origin}/shop`, allowWrite: [server.origin.replace('http://', '')] });
+        const res = await engine.act({ ref: await refByName(engine, 'Guardar'), kind: 'click' });
+        expect(res.text).not.toContain('write blocked');
+      } finally {
+        await engine.shutdown();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
+});
+
+describe('viewport', () => {
+  test(
+    'mobile emulation is on before the first load, survives a full-page screenshot, and desktop resets it',
+    async () => {
+      const engine = await createEngine(nextSession('viewport'));
+      const probe = async (): Promise<{ w: number; touch: number; mobileUa: boolean }> =>
+        // screen.width, not innerWidth: a mobile page without a viewport meta
+        // lays out at 980 px, the same as on a real phone.
+        (await engine.eval({ expr: '({ w: screen.width, touch: navigator.maxTouchPoints, mobileUa: /Mobile/.test(navigator.userAgent) })' }))
+          .data as { w: number; touch: number; mobileUa: boolean };
+      try {
+        await engine.open({ url: `${server.origin}/login`, viewport: 'mobile' });
+        expect(await probe()).toEqual({ w: 390, touch: 5, mobileUa: true });
+
+        const shown = await engine.viewport({});
+        expect(shown.text).toBe('viewport 390x844 mobile');
+
+        await engine.screenshot({ full: true });
+        expect((await probe()).w).toBe(390);
+
+        await engine.viewport({ size: '600x800' });
+        expect(await probe()).toEqual({ w: 600, touch: 0, mobileUa: false });
+
+        await engine.viewport({ size: 'desktop' });
+        await engine.reload({});
+        expect(await probe()).toEqual({ w: 1280, touch: 0, mobileUa: false });
+      } finally {
+        await engine.shutdown();
+      }
+    },
+    30000,
+  );
+});
+
 describe('GPU', () => {
   /** Best-effort: the sandbox may have no NVIDIA device, or lack `fuser`.
    * Either case is reported, never a hard failure of the suite. */

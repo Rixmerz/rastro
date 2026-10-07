@@ -7,6 +7,7 @@ import type { ParseArgsConfig } from 'node:util';
 import { writeFileSync, chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { RastroError } from '../core/types.ts';
+import { toNavigableUrl } from '../core/target.ts';
 import type { RpcMethod } from '../core/types.ts';
 import { call, listSessions } from '../daemon/client.ts';
 import { ensurePrivateDir, resolveFlowRef, sessionPaths } from '../core/paths.ts';
@@ -72,11 +73,13 @@ function dispatch(command: string, argv: string[]): Dispatch {
         'quiet-ms': { type: 'string' },
         'max-window-ms': { type: 'string' },
         'timeout-ms': { type: 'string' },
+        viewport: { type: 'string' },
+        mobile: { type: 'boolean' },
       });
       return {
         method: 'open',
         params: {
-          url: positionals[0],
+          url: positionals[0] === undefined ? undefined : toNavigableUrl(positionals[0], process.cwd()),
           headed: bool(values.headed),
           allowWrite: splitList(str(values['allow-write'])),
           allowUpload: splitList(str(values['allow-upload']))?.map((p) => resolvePath(p)),
@@ -85,12 +88,21 @@ function dispatch(command: string, argv: string[]): Dispatch {
           quietMs: toNumber(str(values['quiet-ms']), '--quiet-ms'),
           maxWindowMs: toNumber(str(values['max-window-ms']), '--max-window-ms'),
           timeoutMs: toNumber(str(values['timeout-ms']), '--timeout-ms'),
+          viewport: str(values.viewport),
+          mobile: bool(values.mobile),
         },
       };
     }
     case 'goto': {
       const { positionals } = sub(argv, {});
-      return { method: 'goto', params: { url: requirePositional(positionals, 0, 'url', USAGE.goto ?? '') } };
+      return { method: 'goto', params: { url: toNavigableUrl(requirePositional(positionals, 0, 'url', USAGE.goto ?? ''), process.cwd()) } };
+    }
+    case 'viewport': {
+      const { values, positionals } = sub(argv, { mobile: { type: 'boolean' }, scale: { type: 'string' } });
+      return {
+        method: 'viewport',
+        params: { size: positionals[0], mobile: bool(values.mobile), scale: toNumber(str(values.scale), '--scale') },
+      };
     }
     case 'back':
     case 'forward':

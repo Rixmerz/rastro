@@ -6,7 +6,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { SessionPaths } from '../core/paths.ts';
+import { hostAllowed } from '../core/target.ts';
 import { RastroError } from '../core/types.ts';
+import { applyEmulation, type Emulation } from './viewport.ts';
 
 export interface TabRecord {
   id: string;
@@ -111,31 +113,7 @@ function extensionArgs(): string[] {
   return dirs.length ? [`--load-extension=${dirs.join(',')}`] : [];
 }
 
-/** Strips a single trailing dot (a trailing-dot FQDN is the same host as its
- * bare form) and lowercases, so allowlist entries and hosts compare equal
- * regardless of case or a trailing-dot form. */
-function normalizeHost(host: string): string {
-  const lower = host.toLowerCase();
-  return lower.endsWith('.') ? lower.slice(0, -1) : lower;
-}
-
-/**
- * `host` matches the allowlist exactly or as a subdomain; `*` allows any
- * host. An empty host or an empty/blank allowlist entry never matches
- * anything (S10) — otherwise `host.endsWith('.' + '')` is true for every
- * host, silently turning `['']` into an allow-all.
- */
-export function hostAllowed(host: string, allowlist: string[]): boolean {
-  if (allowlist.includes('*')) return true;
-  const normalizedHost = normalizeHost(host);
-  if (!normalizedHost) return false;
-  return allowlist.some((raw) => {
-    if (!raw) return false;
-    const allowed = normalizeHost(raw);
-    if (!allowed) return false;
-    return normalizedHost === allowed || normalizedHost.endsWith(`.${allowed}`);
-  });
-}
+export { hostAllowed };
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -184,7 +162,10 @@ export class Session {
   uploadDirs: string[];
   dialogs: 'accept' | 'dismiss';
   activeTabId = '';
+  /** Screen-size emulation every tab gets, new ones and relaunches included. */
+  emulation: Emulation | null = null;
 
+  private readonly emulationClients = new Map<Page, CDPSession>();
   private readonly tabs = new Map<string, TabRecord>();
   private readonly crashedTabs = new Set<string>();
   private readonly writeGuardReady = new Map<Page, Promise<void>>();
@@ -345,6 +326,7 @@ export class Session {
 
     this.tabs.clear();
     this.crashedTabs.clear();
+    this.emulationClients.clear();
     this.activeTabId = '';
     this.closedByUs = false;
     this.isDead = false;
@@ -363,6 +345,28 @@ export class Session {
     if (opts.allowWrite !== undefined) this.allowWrite = opts.allowWrite;
     if (opts.allowUpload !== undefined) this.uploadDirs = [this.paths.uploads, ...opts.allowUpload];
     if (opts.dialogs !== undefined) this.dialogs = opts.dialogs;
+  }
+
+  /** Sets (or with null, clears) the screen-size emulation on every open tab. */
+  async setEmulation(emulation: Emulation | null): Promise<void> {
+    this.emulation = emulation;
+    await Promise.all(this.allTabs().map((tab) => this.reapplyEmulation(tab.page)));
+  }
+
+  /** Puts the session's emulation on `page`. A no-op when there is none and
+   * the page never had one. `afterPlaywright`: Playwright has just applied
+   * device metrics of its own (a full-page screenshot does), and Chromium
+   * ignores an override identical to the one this session already holds, so
+   * it is cleared first to make the re-send count. */
+  async reapplyEmulation(page: Page, afterPlaywright = false): Promise<void> {
+    if (!this.emulation && !this.emulationClients.has(page)) return;
+    let client = this.emulationClients.get(page);
+    if (!client) {
+      client = await page.context().newCDPSession(page);
+      this.emulationClients.set(page, client);
+    }
+    if (afterPlaywright && this.emulation) await client.send('Emulation.clearDeviceMetricsOverride');
+    await applyEmulation(client, this.emulation, this.headed);
   }
 
   browser(): Browser | null {
@@ -482,6 +486,7 @@ export class Session {
 
     page.on('close', () => {
       this.writeGuardReady.delete(page);
+      this.emulationClients.delete(page);
       if (this.tabs.get(id)?.page !== page) return;
       this.tabs.delete(id);
       if (!this.crashedTabs.has(id)) this.safeHook(() => this.hooks.onTabClose(id));
@@ -539,9 +544,15 @@ export class Session {
     // page, including popups, and adding both would register each popup as
     // two tabs.
 
-    return this.installRedirectGuard(page).catch((err: unknown) => {
+    const guard = this.installRedirectGuard(page).catch((err: unknown) => {
       console.error('rastro: redirect guard failed to attach', err);
     });
+    // Before the first navigation, like the guard: a phone-sized session's
+    // new tab must not load its first page at desktop size.
+    const emulated = this.reapplyEmulation(page).catch((err: unknown) => {
+      console.error('rastro: viewport emulation failed to attach', err);
+    });
+    return Promise.all([guard, emulated]).then(() => {});
   }
 
   /**

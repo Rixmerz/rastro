@@ -24,7 +24,9 @@ Navigation and actions use refs that expire after the page changes; run `view` a
 
 **Actions:** `click <ref>`, `fill <ref> <value>`, `type <ref> <value>`, `press <ref|-> <key>`, `check <ref>`, `hover <ref>`. Every action waits for the page to settle (500 ms quiet) before returning.
 
-**Navigation:** `open [url] [--allow-write h1,h2]` (start session, permit writes to hosts), `goto <url>`, `back`, `forward`, `reload`.
+**Navigation:** `open [url] [--allow-write h1,h2]` (start session, permit writes to hosts), `goto <url>`, `back`, `forward`, `reload`. A url can be a bare host (`localhost:3000` → http) or a local file path (`./index.html`).
+
+**Screen size:** `viewport mobile` (390x844 phone: mobile flag, touch, mobile user agent), `viewport 820x1180 --mobile`, `viewport desktop` to reset. Changes the live session, every tab; never load the app in an iframe to fake a phone.
 
 **Investigation:** `effects <id> [--all]` (requests, cookies, DOM changes, errors), `request <id> [--curl] [--reveal]` (headers, body snippet, curl command), `snapshot <id> --before|--after` (page view at that moment), `trace [--action id]` (full event log).
 

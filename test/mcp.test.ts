@@ -38,10 +38,10 @@ afterEach(() => {
 });
 
 describe('tool listing', () => {
-  test('lists the 11 browser tools and the 2 routine tools with short descriptions', async () => {
+  test('lists the 12 browser tools and the 2 routine tools with short descriptions', async () => {
     const { client } = await connect(() => Promise.resolve({ text: 'ok', data: null }));
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(14);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
@@ -50,6 +50,7 @@ describe('tool listing', () => {
         'rastro_read',
         'rastro_act',
         'rastro_navigate',
+        'rastro_viewport',
         'rastro_effects',
         'rastro_trace',
         'rastro_request',
@@ -357,6 +358,6 @@ steps:
     expect(names).not.toContain('add-note');
 
     const off = await connectWith(() => Promise.resolve({ text: 'ok', data: null }), { routines: 'off' });
-    expect((await off.client.listTools()).tools).toHaveLength(11);
+    expect((await off.client.listTools()).tools).toHaveLength(12);
   });
 });

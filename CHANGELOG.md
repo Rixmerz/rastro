@@ -5,6 +5,31 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — phone and tablet screen sizes
+
+There was no way to change the screen size: the viewport was fixed when the
+browser launched, so testing a mobile layout meant loading the app inside a
+390 px iframe of the same tab.
+
+- **`rastro viewport [WxH|mobile|tablet|desktop] [--mobile] [--scale n]`** and
+  **`rastro_viewport`**: resize the live session without a relaunch, on every
+  tab, new tabs and relaunches included. `--mobile` adds the mobile flag,
+  touch and an Android Chrome user agent.
+- `open --viewport <size>` / `--mobile`, and `viewport` / `mobile` on
+  `rastro_open`.
+
+### Fixed — local targets
+
+- `open` and `goto` rejected anything that was not a full URL with "Cannot
+  navigate to invalid URL": a local file (`./index.html`, `/abs/x.html`,
+  `~/x.html`) now opens as a `file://` URL resolved against the caller's
+  directory, and a bare host gets a scheme (`localhost:3000` and private
+  addresses http, others https).
+- An `--allow-write` entry with a port or a scheme (`localhost:3000`,
+  `http://localhost:3000`) never matched, since a request's host carries
+  neither: writes to a local dev server were blocked. Entries are now reduced
+  to their host, in the browser's write guard, `replay` and recipe checks.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added — reading a page, and routines that return what they read
