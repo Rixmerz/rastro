@@ -14,6 +14,7 @@ import { CookieJar } from '../link/jar.ts';
 import { isWriteRequest, type Recipe } from '../link/recipe.ts';
 import { runRecipe } from '../link/run.ts';
 import { SecretRegistry } from '../security/redact.ts';
+import { hostAllowed } from '../core/target.ts';
 import { assertInsideDirs } from '../security/sandbox.ts';
 import { resolveRunValues } from './params.ts';
 import type { Routine } from './registry.ts';
@@ -51,7 +52,7 @@ function assertRecipeHosts(recipe: Recipe, allowed: string[]): void {
     } catch {
       throw new RastroError(`recipe request ${req.id} has no readable host`);
     }
-    const ok = allowed.includes('*') || allowed.some((h) => host === h || host.endsWith(`.${h}`));
+    const ok = hostAllowed(host, allowed);
     if (!ok) throw new RastroError(`recipe request ${req.id} writes to ${host}, outside the routine's allowWrite`, 'add the host to tool.allowWrite or fix the recipe');
   }
 }

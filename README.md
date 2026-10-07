@@ -101,6 +101,30 @@ rastro request r31 --curl
 #   -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
+## Local targets and screen sizes
+
+`open` and `goto` take more than full URLs: `localhost:3000` (opened over
+http, as are private addresses), `example.com` (https), and a local file —
+`./index.html`, `/abs/path.html` or `~/site/index.html` — which becomes a
+`file://` URL resolved against your shell's directory. An `--allow-write`
+entry can be written the way you copied it: `localhost:3000` and
+`http://localhost:3000/app` both mean the host `localhost`.
+
+```bash
+rastro open localhost:5173 --allow-write localhost:5173 --mobile
+rastro viewport                 # viewport 390x844 mobile
+rastro viewport 820x1180 --mobile
+rastro viewport --scale 2       # same size, device pixel ratio 2
+rastro viewport desktop         # back to 1280x900 (headless) or the window
+```
+
+`viewport` resizes the live session — every tab, new ones and relaunches
+included — without restarting the browser, so logins and page state stay.
+`mobile` and `tablet` are presets; `--mobile` adds the mobile flag (a page
+without a viewport meta lays out at 980 px, as on a real phone), touch, and an
+Android Chrome user agent, which a server only sees from the next load. Over
+MCP it is `rastro_viewport`, and `rastro_open` takes `viewport` / `mobile`.
+
 ## Levels of investigation
 
 | What you are asking | Command | When |

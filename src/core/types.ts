@@ -304,6 +304,7 @@ export type RpcMethod =
   | 'routineRun'
   | 'flowLink'
   | 'read'
+  | 'viewport'
   | 'flowExport'
   | 'flowImport'
   | 'status'

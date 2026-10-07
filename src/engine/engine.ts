@@ -17,6 +17,7 @@ import type {
   RpcResult,
 } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
+import { hostAllowed, toNavigableUrl } from '../core/target.ts';
 import { ensureSessionDirs, sessionPaths, type SessionPaths } from '../core/paths.ts';
 import { TraceStore } from '../store/db.ts';
 import { BodyStore } from '../store/bodies.ts';
@@ -41,6 +42,7 @@ import {
 import { toHar } from '../export/har.ts';
 import { toPerfetto } from '../export/perfetto.ts';
 import { Session, type TabRecord } from './session.ts';
+import { describeViewport, parseViewport } from './viewport.ts';
 import { Recorder } from './recorder.ts';
 import { detectBlocked } from './blocked.ts';
 import { VERSION } from '../version.ts';
@@ -62,6 +64,14 @@ const OpenParamsSchema = z.object({
   quietMs: z.number().positive().optional(),
   maxWindowMs: z.number().positive().optional(),
   timeoutMs: z.number().positive().optional(),
+  viewport: z.string().optional(),
+  mobile: z.boolean().optional(),
+});
+
+const ViewportParamsSchema = z.object({
+  size: z.string().optional(),
+  mobile: z.boolean().optional(),
+  scale: z.number().positive().optional(),
 });
 
 const ViewParamsSchema = z.object({
@@ -485,15 +495,19 @@ export class EngineCore implements Engine {
     }
 
     const page = await this.ensureAlive();
+    if (params.viewport !== undefined || params.mobile !== undefined) {
+      await this.session!.setEmulation(parseViewport(params.viewport ?? 'mobile', { mobile: params.mobile }));
+    }
     if (!params.url) {
       return { text: `session open · ${page.url()}`, data: { url: page.url() } };
     }
 
+    const url = toNavigableUrl(params.url);
     return this.runAction({
       kind: 'open',
       source: 'agent',
       perform: async (page) => {
-        await page.goto(params.url!, { timeout: this.config.timeoutMs });
+        await page.goto(url, { timeout: this.config.timeoutMs });
       },
     });
   }
@@ -501,11 +515,12 @@ export class EngineCore implements Engine {
   async goto(rawParams: Record<string, unknown>): Promise<RpcResult> {
     const params = parse(NavParamsSchema, rawParams);
     if (!params.url) throw new RastroError('goto requires a url');
+    const url = toNavigableUrl(params.url);
     return this.runAction({
       kind: 'goto',
       source: 'agent',
       perform: async (page) => {
-        await page.goto(params.url!, { timeout: this.config.timeoutMs });
+        await page.goto(url, { timeout: this.config.timeoutMs });
       },
     });
   }
@@ -1089,6 +1104,7 @@ export class EngineCore implements Engine {
     const page = await this.ensureAlive();
     const filePath = params.path ?? join(this.paths.out, `screenshot-${Date.now()}.png`);
     await page.screenshot({ path: filePath, fullPage: params.full ?? false });
+    if (params.full) await this.session!.reapplyEmulation(page, true);
     return { text: filePath, data: { file: filePath }, files: [filePath] };
   }
 
@@ -1196,7 +1212,7 @@ export class EngineCore implements Engine {
         } catch {
           // malformed URL: falls through to blocked below, same as the live write guard.
         }
-        const allowed = session.allowWrite.includes('*') || session.allowWrite.some((h) => host === h || host.endsWith(`.${h}`));
+        const allowed = hostAllowed(host, session.allowWrite);
         if (!allowed) {
           this.store.addEvent({
             t: this.now(),
@@ -1286,6 +1302,26 @@ export class EngineCore implements Engine {
     await session.context.tracing.start({ screenshots: true, snapshots: true });
     const warning = 'warning: pw-trace is NOT redacted; it contains typed text and cookies';
     return { text: `${filePath}\n${warning}`, data: { file: filePath }, files: [filePath] };
+  }
+
+  /** Shows, sets or clears the screen size every tab of the session renders at. */
+  async viewport(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    const params = parse(ViewportParamsSchema, rawParams);
+    const session = this.requireSession();
+    await this.ensureAlive();
+    const changing = params.size !== undefined || params.mobile !== undefined || params.scale !== undefined;
+    if (changing) {
+      const current = session.emulation;
+      const spec = params.size ?? (current ? `${current.width}x${current.height}` : 'mobile');
+      // Without a size, the flags change on top of the current emulation.
+      const keep = params.size === undefined ? current : null;
+      await session.setEmulation(parseViewport(spec, { mobile: params.mobile ?? keep?.mobile, scale: params.scale ?? keep?.scale }));
+    }
+    let text = describeViewport(session.emulation, this.sessionHeaded);
+    // The user agent travels with requests: a server that picks a mobile
+    // layout from it only sees the new one on the next load.
+    if (changing && session.emulation?.mobile) text += ' · reload for server-side mobile detection';
+    return { text, data: session.emulation ?? null };
   }
 
   async status(): Promise<RpcResult> {
