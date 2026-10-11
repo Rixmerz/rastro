@@ -14,7 +14,8 @@ import { extractInput, readJsonPath } from './compile.ts';
 import type { CookieJar } from './jar.ts';
 import { matchesRequestPattern } from '../flow/format.ts';
 import { project, selectJson } from '../flow/json-path.ts';
-import { fill, fillDeep, isWriteRequest, type ExtractRule, type Recipe, type RecipeRequest, type Resolve } from './recipe.ts';
+import { fill, fillDeep, isWriteRequest, type ExtractRule, type Paginate, type Recipe, type RecipeRequest, type Resolve } from './recipe.ts';
+import { nextPageUrl, pageItems, withItems } from './paginate.ts';
 
 export interface HttpRunOptions {
   /** Parameter values, keyring ones already resolved. */
@@ -86,6 +87,80 @@ function buildUrl(req: RecipeRequest, resolve: Resolve): string {
   return url.href;
 }
 
+interface Outgoing {
+  method: string;
+  url: string;
+  headers: Headers;
+  body: BodyInit | undefined;
+}
+
+/** Sends one request, following redirects by hand so every hop's Set-Cookie
+ * reaches the jar. `first` is the first hop's response, `res` the last. */
+async function send(doFetch: typeof fetch, opts: HttpRunOptions, out: Outgoing, onFirst: (first: Response) => void): Promise<{ first: Response; res: Response; url: string }> {
+  let { method, url, body } = out;
+  const headers = new Headers(out.headers);
+  let first: Response | undefined;
+  for (let hop = 0; ; hop++) {
+    const cookie = opts.jar.header(url);
+    if (cookie) headers.set('cookie', cookie);
+    else headers.delete('cookie');
+    const init: RequestInit = { method, headers, redirect: 'manual', signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) };
+    if (body !== undefined) init.body = body;
+    const res = await doFetch(url, init);
+    opts.jar.store(url, res.headers.getSetCookie());
+    if (!first) {
+      first = res;
+      onFirst(res);
+    }
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location && hop < MAX_REDIRECTS) {
+      await res.arrayBuffer().catch(() => undefined);
+      url = new URL(location, url).href;
+      if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== 'GET' && method !== 'HEAD')) {
+        method = 'GET';
+        body = undefined;
+        headers.delete('content-type');
+      }
+      continue;
+    }
+    return { first, res, url };
+  }
+}
+
+/** Fetches the pages after the first and returns the first page's body with
+ * every page's items merged into its list. */
+async function followPages(id: string, p: Paginate, url: string, firstBody: string, fetchPage: (url: string) => Promise<{ status: number; body: string }>): Promise<string> {
+  let root: unknown;
+  try {
+    root = JSON.parse(firstBody);
+  } catch {
+    throw new Mismatch(`${id}: paginates but its response is not JSON`);
+  }
+  const firstItems = pageItems(root, p);
+  if (!firstItems) throw new Mismatch(`${id}: paginates but ${p.items || 'the response'} is not a list`);
+  const all = [...firstItems];
+  let page = root;
+  let lastLength = firstItems.length;
+  const seen = new Set([url]);
+  for (let n = 1; n < p.maxPages; n++) {
+    const next = nextPageUrl(p, url, page, firstItems.length, lastLength);
+    if (next === undefined || seen.has(next)) break;
+    seen.add(next);
+    const res = await fetchPage(next);
+    if (res.status < 200 || res.status >= 300) throw new Mismatch(`${id}: page ${n + 1} (${bareOf(next)}) answered ${res.status}`);
+    try {
+      page = JSON.parse(res.body);
+    } catch {
+      throw new Mismatch(`${id}: page ${n + 1} is not JSON`);
+    }
+    const items = pageItems(page, p) ?? [];
+    all.push(...items);
+    lastLength = items.length;
+    url = next;
+  }
+  return all.length === firstItems.length ? firstBody : JSON.stringify(withItems(root, p.items, all));
+}
+
 export async function runRecipe(recipe: Recipe, opts: HttpRunOptions): Promise<HttpRunResult> {
   const doFetch = opts.fetchImpl ?? fetch;
   const vars: Record<string, string> = { ...opts.params };
@@ -104,56 +179,41 @@ export async function runRecipe(recipe: Recipe, opts: HttpRunOptions): Promise<H
     try {
       currentUrl = buildUrl(req, resolve);
       const requestUrl = currentUrl;
-      let method = req.method;
-      let body = buildBody(req, resolve, opts);
+      const method = req.method;
+      const body = buildBody(req, resolve, opts);
       const headers = new Headers();
       for (const [name, value] of Object.entries(req.headers ?? {})) headers.set(name, fill(value, resolve));
 
-      let first: Response | undefined;
-      let res: Response;
-      for (let hop = 0; ; hop++) {
-        const cookie = opts.jar.header(currentUrl);
-        if (cookie) headers.set('cookie', cookie);
-        else headers.delete('cookie');
-        const init: RequestInit = { method, headers, redirect: 'manual', signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) };
-        if (body !== undefined) init.body = body;
-        res = await doFetch(currentUrl, init);
-        opts.jar.store(currentUrl, res.headers.getSetCookie());
-
-        if (!first) {
-          first = res;
-          sent += 1;
-          if (isWriteRequest(req)) {
-            const write: WriteRecord = { method: req.method, path: bareOf(currentUrl), status: res.status };
-            if (req.xhr) write.xhr = true;
-            const location = res.headers.get('location');
-            if (location) write.location = new URL(location, currentUrl).href;
-            writes.push(write);
-          }
-        }
-
-        const location = res.headers.get('location');
-        if (res.status >= 300 && res.status < 400 && location && hop < MAX_REDIRECTS) {
-          await res.arrayBuffer().catch(() => undefined);
-          currentUrl = new URL(location, currentUrl).href;
-          if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== 'GET' && method !== 'HEAD')) {
-            method = 'GET';
-            body = undefined;
-            headers.delete('content-type');
-          }
-          continue;
-        }
-        break;
-      }
-
-      const text = await res.text();
+      // Counted on the first hop, before any redirect: a write that went out
+      // stays reported even when a later hop throws.
+      const sent_ = await send(doFetch, opts, { method, url: currentUrl, headers, body }, (firstRes) => {
+        sent += 1;
+        if (!isWriteRequest(req)) return;
+        const write: WriteRecord = { method: req.method, path: bareOf(requestUrl), status: firstRes.status };
+        if (req.xhr) write.xhr = true;
+        const location = firstRes.headers.get('location');
+        if (location) write.location = new URL(location, requestUrl).href;
+        writes.push(write);
+      });
+      const first = sent_.first;
+      currentUrl = sent_.url;
+      const res = sent_.res;
+      let text = await res.text();
       if (!req.xhr) landing = currentUrl;
-      responses.push({ method: req.method, url: requestUrl, status: first.status, body: text });
       const got = `${Math.floor(first.status / 100)}xx`;
       if (req.expect && got !== req.expect) {
         const where = first.headers.get('location');
         throw new Mismatch(`${req.id} ${req.method} ${bareOf(requestUrl)} answered ${first.status}${where ? ` → ${bareOf(new URL(where, requestUrl).href)}` : ''} where ${req.expect} was recorded`);
       }
+      if (req.paginate) {
+        text = await followPages(req.id, req.paginate, currentUrl, text, async (url) => {
+          const page = await send(doFetch, opts, { method: 'GET', url, headers, body: undefined }, () => {
+            sent += 1;
+          });
+          return { status: page.first.status, body: await page.res.text() };
+        });
+      }
+      responses.push({ method: req.method, url: requestUrl, status: first.status, body: text });
 
       const location = first.headers.get('location');
       const response = location ? { body: text, url: currentUrl, location: new URL(location, requestUrl).href } : { body: text, url: currentUrl };

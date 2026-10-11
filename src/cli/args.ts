@@ -119,6 +119,7 @@ export const USAGE: Record<string, string> = {
   'flow run': 'rastro flow run <name|file> [--from n] [--param k=v ...]',
   'flow export': 'rastro flow export <name|file> [--out path] [--playwright]',
   'flow link': 'rastro flow link <name|file> [--param k=v ...] [--from id --to id]',
+  'flow emit': 'rastro flow emit <name|file> [--lang ts|py] [--out path]',
   'flow import': 'rastro flow import <chrome.json> <out.yaml>',
   routine: 'rastro routine list | rastro routine show <name> | rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
   'routine list': 'rastro routine list',
@@ -138,15 +139,17 @@ commands:
   view, read, act (click, fill, type, press, select, check, uncheck, hover, dblclick, scroll, upload)
   detail, history, effects, trace, request, snapshot, screenshot
   console, cookies, storage, tabs, eval, replay, export
-  record start|stop, flow save|run|link|export|import
+  record start|stop, flow save|run|link|emit|export|import
   routine list|show|run
   secret set|list|rm
   status, close, kill, mcp
 
 global flags:
   -s, --session <name>   session to use (default: $RASTRO_SESSION or "default")
-  --json                 print machine-readable JSON instead of text
+  --json                 print one JSON line: {schemaVersion, ok, data} or {schemaVersion, ok: false, error}
   -h, --help             show this help, or "rastro <command> --help"
   --version              print the version
+
+exit codes: 0 success, 1 runtime error, 2 usage error.
 
 run "rastro <command> --help" for a command's usage line.`;

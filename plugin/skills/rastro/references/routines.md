@@ -70,3 +70,21 @@ short value it could not bind, may need a hand edit in `<name>.link.yaml`,
 which un-verifies it until another `--engine http` run.
 Not linkable: JS-signed requests, WebSockets, browser-minted bearer tokens,
 uploads whose body the browser hides.
+
+A list read gets a `paginate` block when its JSON looks like one page (cursor,
+next URL, page number, offset): the HTTP run then fetches up to `maxPages`
+pages and the capture sees every item. The link says so in a warning; delete
+the block to keep only the recorded page.
+
+## Handing a recipe to other code
+
+```bash
+rastro flow emit <name> --lang py      # <name>_client.py, standard library only
+rastro flow emit <name> --lang ts      # <name>.client.ts, Node >= 22.18
+```
+
+The client replays the recipe exactly, with no credential inside: the caller
+passes a Cookie header or the session's `cookies.json`, and keyring params as
+environment variables (listed in the file's header). Only fresh recipes are
+emitted; link again first if the flow changed, and verify with
+`--engine http` before handing it over.

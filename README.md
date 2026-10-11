@@ -30,6 +30,7 @@ as a causal trace it can dig into when it matters.
 | Investigation on demand | **yes**, in levels | no | yes, unfiltered | no | partial |
 | Safe with nobody watching | **write guard + masking** | no | no | no | no |
 | Human recording → script | **yes** (YAML + Playwright export) | separate codegen | Chrome Recorder | no | no |
+| Run → standalone API client | **yes**, deterministic (`flow emit`, TS / Python) | no | no | no | no |
 | Browser | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
 
 The two real differentiators are **causal attribution** — no other tool tells
@@ -331,6 +332,76 @@ short-lived bearer tokens minted in the browser, and uploads whose body the
 browser does not expose. Those routines keep running in the browser. A
 Playwright script cannot be linked directly: the input is a Rastro run, not
 source code.
+
+### Lists: every page, not just the recorded one
+
+A read routine usually fetched one page of a list when it was linked. When the
+product request (the last one, or the one a `capture` names) is a script GET
+whose JSON looks like one page of something longer, the link adds a
+`paginate` block and says so in a warning:
+
+```yaml
+- id: q3
+  method: GET
+  url: https://api.example.test/jobs
+  query: [{ name: page, value: "1" }]
+  paginate: { query: page, next: { step: 1 }, items: jobs, maxPages: 10 }
+```
+
+Recognised: a cursor in the response sent back as a query parameter
+(`next: { json: meta.next_cursor }`), a next URL on the same origin
+(`next: { url: next }`), a page number (`step: 1`) and an offset with a limit
+(`step: <limit>`). The HTTP run fetches the following pages and merges their
+items into the first response, so captures see the whole list. It stops at
+`maxPages`, at an empty or short page, or when the cursor or next URL runs
+out. Only reads paginate; delete the block to read just the recorded page.
+
+## Standalone clients: `flow emit`
+
+A verified recipe can leave Rastro as plain code, for a backend job or a script
+in another repository:
+
+```bash
+rastro flow emit publish-file --lang py      # publish_file_client.py, standard library only
+rastro flow emit publish-file --lang ts      # publish-file.client.ts, Node >= 22.18 runs it as is
+```
+
+```python
+from publish_file_client import publish_file
+result = publish_file({"course": 12345, "section": 1, "file": "a.pdf"},
+                      cookie_file="~/.local/share/rastro/sessions/default/cookies.json")
+```
+
+The recipe goes into the file as data, with a small runtime that replays it
+under the HTTP runner's rules: extraction rules, redirects followed by hand,
+status classes checked, pagination, captures. Nothing is inferred, so the
+client does what the verified recipe does — the opposite of having a model
+guess a client from a HAR.
+
+- **No credential in the file**, as with the recipe. The session comes from
+  the caller: a Cookie header (`cookie=` / `--cookie` / `$COOKIE`) or the
+  Rastro session's `cookies.json` (`cookie_file=` / `--cookie-file` /
+  `$RASTRO_COOKIES`). Keyring parameters are read from environment variables
+  (`from: secret:api.token` → `$API_TOKEN`, listed in the file's header).
+- **Stale recipes are refused**; an unverified one is emitted with a warning
+  in the file and in the answer.
+- A client that writes says so at the top, and on failure reports the writes
+  already sent (`ReplayError.writes`), so a caller does not retry them blindly.
+- Emit again after linking again; do not edit the file by hand.
+
+## Machine-readable output
+
+With `--json`, every command prints one line:
+
+```json
+{"schemaVersion":1,"ok":true,"data":{"action":3,"requests":1}}
+{"schemaVersion":1,"ok":false,"error":{"kind":"runtime","message":"the recipe is stale…","hint":"run flow link again, then emit"}}
+```
+
+`data` is what the command returns; a routine that ran and failed is
+`ok: false` with its result in `data`. The text error still goes to stderr.
+Exit codes: `0` success, `1` runtime error, `2` usage error. `schemaVersion`
+changes when the envelope or a command's `data` changes shape.
 
 ## Daemon control
 

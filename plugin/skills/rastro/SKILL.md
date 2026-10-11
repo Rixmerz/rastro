@@ -69,4 +69,4 @@ For multi-step goals that take more than 3–4 interactions (login flows, multi-
 - `flows.md` — record mode, flow YAML with login examples, flow run/resume, Playwright export, Chrome import.
 - `routines.md` — running routines, reading their results, making one, linking it to HTTP.
 
-See the CLI surface with `rastro -h` or run `rastro --json` for machine-readable output.
+See the CLI surface with `rastro -h`. Add `--json` for machine-readable output: one line, `{schemaVersion, ok, data}` or `{schemaVersion, ok: false, error}`.

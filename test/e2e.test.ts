@@ -35,12 +35,19 @@ function runCli(args: string[]): Promise<CliResult> {
   });
 }
 
+/** The `data` of a `--json` envelope. */
+function dataOf(stdout: string): unknown {
+  const envelope = JSON.parse(stdout) as { schemaVersion: number; ok: boolean; data: unknown };
+  if (envelope.schemaVersion !== 1 || !envelope.ok) throw new Error(`unexpected --json envelope: ${stdout}`);
+  return envelope.data;
+}
+
 /** Uses `view --find --json` to resolve a ref by visible name, regardless of
  * whether the plain-text view would have collapsed that region. */
 async function findRef(session: string, name: string): Promise<string> {
   const { stdout, code } = await runCli(['-s', session, 'view', '--find', name, '--json']);
   expect(code).toBe(0);
-  const data = JSON.parse(stdout) as { regions: { items: { ref: string; name: string }[] }[] };
+  const data = dataOf(stdout) as { regions: { items: { ref: string; name: string }[] }[] };
   const item = data.regions.flatMap((r) => r.items)[0];
   if (!item) throw new Error(`no item named "${name}" found; view --find --json returned:\n${stdout}`);
   return item.ref;
@@ -167,7 +174,7 @@ describe('rastro e2e: CLI -> daemon -> real engine', () => {
 
       const json = await runCli(['-s', session, 'effects', String(clickActionId), '--json']);
       expect(json.code).toBe(0);
-      const data = JSON.parse(json.stdout) as { requests: { id: string; method: string; url: string }[] };
+      const data = dataOf(json.stdout) as { requests: { id: string; method: string; url: string }[] };
       const loginReq = data.requests.find((r) => r.method === 'POST' && new URL(r.url).pathname === '/login');
       expect(loginReq).toBeDefined();
       loginRequestId = loginReq!.id;
@@ -259,7 +266,7 @@ describe('rastro e2e: CLI -> daemon -> real engine', () => {
       const { stdout, code } = await runCli(['-s', session, 'click', productoRef, '--json']);
       expect(code).toBe(0);
       expect(stdout.trim().split('\n')).toHaveLength(1);
-      const data = JSON.parse(stdout) as { action: number };
+      const data = dataOf(stdout) as { action: number };
       expect(typeof data.action).toBe('number');
     },
     60000,
@@ -326,7 +333,7 @@ describe('daemon restart keeps one continuous timeline', () => {
 
       const effectsJson = await runCli(['-s', session, 'effects', String(action3), '--json']);
       expect(effectsJson.code).toBe(0);
-      const data = JSON.parse(effectsJson.stdout) as { requests: { url: string }[] };
+      const data = dataOf(effectsJson.stdout) as { requests: { url: string }[] };
       const paths = data.requests.map((r) => new URL(r.url).pathname);
       expect(paths).toContain('/api/search');
       expect(paths.some((p) => p === '/login' || p === '/panel')).toBe(false);
@@ -447,7 +454,7 @@ describe('request --body reaches --json callers too', () => {
       // body in machine-readable form got everything except the body.
       const { stdout, code } = await runCli(['-s', session, 'request', 'r1', '--body', '--json']);
       expect(code).toBe(0);
-      expect(Object.keys(JSON.parse(stdout) as Record<string, unknown>)).toContain('body');
+      expect(Object.keys(dataOf(stdout) as Record<string, unknown>)).toContain('body');
     },
     60000,
   );
