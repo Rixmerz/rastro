@@ -5,14 +5,15 @@
 import { parseArgs } from 'node:util';
 import type { ParseArgsConfig } from 'node:util';
 import { writeFileSync, chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { RastroError } from '../core/types.ts';
 import type { RpcMethod } from '../core/types.ts';
 import { call, listSessions } from '../daemon/client.ts';
 import { ensurePrivateDir, resolveFlowRef, sessionPaths } from '../core/paths.ts';
-import { describeLink, findRoutine, loadRoutines } from '../routines/registry.ts';
+import { describeLink, findRoutine, loadRoutines, readLink } from '../routines/registry.ts';
+import { clientFileName, emitClient, envVars, type EmitLang } from '../link/emit.ts';
 import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
-import { lastRun } from '../routines/state.ts';
+import { contentHash, lastRun } from '../routines/state.ts';
 import { secretGet, secretList, secretRemove, secretSet } from '../security/vault.ts';
 import { readSecretInteractively } from './prompt.ts';
 import {
@@ -29,6 +30,17 @@ import type { Dispatch } from './args.ts';
 import { VERSION } from '../version.ts';
 
 const MAX_INLINE_BYTES = 4096;
+
+/** Version of the `--json` envelope. Bumped when its shape, or the shape of a
+ * command's `data`, changes in a way a parser would notice. */
+const JSON_SCHEMA_VERSION = 1;
+
+/** Every `--json` answer is one line on stdout: `{schemaVersion, ok, data}`
+ * on success, `{schemaVersion, ok: false, error}` on failure. A routine that
+ * ran and failed is `ok: false` with its result in `data`. */
+function printJson(data: unknown, ok = true): void {
+  console.log(JSON.stringify({ schemaVersion: JSON_SCHEMA_VERSION, ok, data }));
+}
 
 function sub(argv: string[], options: ParseArgsConfig['options']): { values: Record<string, string | boolean | (string | boolean)[] | undefined>; positionals: string[] } {
   try {
@@ -341,12 +353,7 @@ function dispatchFlow(sub_: string, argv: string[]): Dispatch {
     const ref = requirePositional(positionals, 0, 'file', USAGE['flow link'] ?? '');
     // A bare name links the routine `routine run` would run, so the recipe
     // lands next to the file that will use it (routine dirs, RASTRO_FLOWS).
-    let file: string;
-    try {
-      file = ref.includes('/') || /\.ya?ml$/i.test(ref) ? resolveFlowRef(ref) : findRoutine(ref).file;
-    } catch {
-      file = resolveFlowRef(ref);
-    }
+    const file = flowFileFor(ref);
     return {
       method: 'flowLink',
       params: {
@@ -385,7 +392,7 @@ function showRoutine(name: string, json: boolean): void {
   const routine = findRoutine(name);
   const run = lastRun(routine.name);
   if (json) {
-    console.log(JSON.stringify({ ...routine, lastRun: run ?? null }));
+    printJson({ ...routine, lastRun: run ?? null });
     return;
   }
   const lines = [
@@ -414,7 +421,7 @@ function showRoutine(name: string, json: boolean): void {
 function listRoutines(json: boolean): void {
   const catalog = loadRoutines();
   if (json) {
-    console.log(JSON.stringify(catalog));
+    printJson(catalog);
     return;
   }
   const lines: string[] = [];
@@ -429,24 +436,69 @@ function listRoutines(json: boolean): void {
   console.log(lines.join('\n'));
 }
 
-function printError(err: unknown): number {
-  if (err instanceof UsageError) {
-    console.error(`error: ${err.message}`);
-    return 2;
+/** A bare name means the routine `routine run` would run, else a flow file. */
+function flowFileFor(ref: string): string {
+  try {
+    return ref.includes('/') || /\.ya?ml$/i.test(ref) ? resolveFlowRef(ref) : findRoutine(ref).file;
+  } catch {
+    return resolveFlowRef(ref);
   }
-  if (err instanceof RastroError) {
-    console.error(`error: ${err.message}`);
-    if (err.hint) console.error(`hint: ${err.hint}`);
-    return 1;
+}
+
+/**
+ * `flow emit`: the flow's linked recipe as a standalone client. Runs in the
+ * CLI: the recipe and the flow are files, and nothing here needs a browser.
+ * Only a fresh recipe is emitted; an unverified one is emitted with a warning
+ * in the file and in the answer.
+ */
+function emitFlow(args: string[], json: boolean): void {
+  const { values, positionals } = sub(args, { lang: { type: 'string' }, out: { type: 'string' } });
+  const lang = str(values.lang) ?? 'ts';
+  if (lang !== 'ts' && lang !== 'py') throw new UsageError(`--lang expects ts or py, got "${lang}"`);
+  const flowFile = resolvePath(flowFileFor(requirePositional(positionals, 0, 'name', USAGE['flow emit'] ?? '')));
+  if (!existsSync(flowFile)) throw new RastroError(`no flow ${flowFile}`);
+  const link = readLink(flowFile, contentHash(readFileSync(flowFile, 'utf8')));
+  if (!link) throw new RastroError(`${basename(flowFile)} is not linked`, `run: rastro flow link ${basename(flowFile).replace(/\.ya?ml$/i, '')} --param ...`);
+  if (link.state === 'invalid') throw new RastroError(`the recipe cannot be read: ${link.error ?? ''}`, `fix ${link.file} or link again`);
+  if (link.state === 'stale') throw new RastroError('the recipe is stale: the flow changed since it was linked', 'run flow link again, then emit');
+  const recipe = link.recipe!;
+  const out = str(values.out) === undefined ? join(dirname(link.file), clientFileName(recipe.flow, lang)) : resolvePath(str(values.out)!);
+  writeFileSync(out, emitClient(recipe, lang as EmitLang, { source: basename(link.file), verified: link.verified }), { mode: 0o644 });
+
+  const env = Object.values(envVars(recipe));
+  const paginated = recipe.requests.filter((r) => r.paginate).map((r) => r.id);
+  const data = { file: out, lang, flow: recipe.flow, verified: link.verified, params: recipe.params, env, paginated, warnings: recipe.warnings ?? [] };
+  if (json) {
+    printJson(data);
+    return;
   }
-  console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-  return 1;
+  const lines = [`emitted ${out}`, `params: ${recipe.params.length > 0 ? recipe.params.join(', ') : 'none'}`];
+  if (env.length > 0) lines.push(`from the environment (keyring params): ${env.join(', ')}`);
+  if (paginated.length > 0) lines.push(`follows pages: ${paginated.join(', ')}`);
+  lines.push('session: pass a Cookie header (--cookie / $COOKIE) or a Rastro cookies.json (--cookie-file / $RASTRO_COOKIES)');
+  if (!link.verified) lines.push(`warning: the recipe is not verified yet; run: rastro routine run ${recipe.flow} --engine http`);
+  for (const w of recipe.warnings ?? []) lines.push(`link warning: ${w}`);
+  console.log(lines.join('\n'));
+}
+
+function printError(err: unknown, json = false): number {
+  const usage = err instanceof UsageError;
+  const message = err instanceof Error ? err.message : String(err);
+  const hint = err instanceof RastroError ? err.hint : undefined;
+  console.error(`error: ${message}`);
+  if (hint) console.error(`hint: ${hint}`);
+  if (json) {
+    const error: { kind: 'usage' | 'runtime'; message: string; hint?: string } = { kind: usage ? 'usage' : 'runtime', message };
+    if (hint) error.hint = hint;
+    console.log(JSON.stringify({ schemaVersion: JSON_SCHEMA_VERSION, ok: false, error }));
+  }
+  return usage ? 2 : 1;
 }
 
 /** Applies the output contract: text vs --json, and the 4 KB spill-to-file rule. */
 function printResult(session: string, command: string, json: boolean, result: { text: string; data: unknown }): void {
   if (json) {
-    console.log(JSON.stringify(result.data));
+    printJson(result.data, (result.data as { ok?: unknown } | null)?.ok !== false);
     return;
   }
   const bytes = Buffer.byteLength(result.text, 'utf8');
@@ -505,7 +557,8 @@ function runSecret(args: string[], json: boolean): void {
 
   if (sub === 'list') {
     const names = secretList();
-    console.log(json ? JSON.stringify(names) : names.join('\n'));
+    if (json) printJson(names);
+    else console.log(names.join('\n'));
     return;
   }
 
@@ -520,12 +573,15 @@ function runSecret(args: string[], json: boolean): void {
       throw new RastroError('the value cannot be passed as an argument', `run: rastro secret set ${name}`);
     }
     secretSet(name, readSecretInteractively(`value for ${name}`, ['secret', 'set', name]));
-    console.log(`stored ${name}`);
+    if (json) printJson({ name, stored: true });
+    else console.log(`stored ${name}`);
     return;
   }
 
   if (sub === 'rm') {
-    console.log(secretRemove(name) ? `removed ${name}` : `no secret ${name}`);
+    const removed = secretRemove(name);
+    if (json) printJson({ name, removed });
+    else console.log(removed ? `removed ${name}` : `no secret ${name}`);
     return;
   }
 
@@ -533,7 +589,8 @@ function runSecret(args: string[], json: boolean): void {
     if (!reveal) throw new RastroError('refusing to print a secret', 'add --reveal if you really mean it (human use only)');
     const value = secretGet(name);
     if (value === null) throw new RastroError(`no secret ${name}`);
-    console.log(value);
+    if (json) printJson({ name, value });
+    else console.log(value);
     return;
   }
 
@@ -545,7 +602,8 @@ async function main(): Promise<void> {
   const { session, json, help, version, rest } = parseGlobalFlags(argv);
 
   if (version) {
-    console.log(VERSION);
+    if (json) printJson({ version: VERSION });
+    else console.log(VERSION);
     return;
   }
 
@@ -568,9 +626,11 @@ async function main(): Promise<void> {
 
   if (command === 'kill') {
     try {
-      console.log(killDaemon(session, args.includes('--force')));
+      const message = killDaemon(session, args.includes('--force'));
+      if (json) printJson({ session, message });
+      else console.log(message);
     } catch (err) {
-      process.exitCode = printError(err);
+      process.exitCode = printError(err, json);
     }
     return;
   }
@@ -579,7 +639,7 @@ async function main(): Promise<void> {
     try {
       runSecret(args, json);
     } catch (err) {
-      process.exitCode = printError(err);
+      process.exitCode = printError(err, json);
     }
     return;
   }
@@ -592,7 +652,7 @@ async function main(): Promise<void> {
       sessions.push(current);
     }
     if (json) {
-      console.log(JSON.stringify(sessions));
+      printJson(sessions);
     } else {
       for (const s of sessions) {
         console.log(`${s.session}: ${s.state}`);
@@ -608,10 +668,20 @@ async function main(): Promise<void> {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ECONNREFUSED') {
-        console.log(`session ${session} is not running`);
+        if (json) printJson({ session, running: false });
+        else console.log(`session ${session} is not running`);
         return;
       }
-      process.exitCode = printError(err);
+      process.exitCode = printError(err, json);
+    }
+    return;
+  }
+
+  if (command === 'flow' && args[0] === 'emit') {
+    try {
+      emitFlow(args.slice(1), json);
+    } catch (err) {
+      process.exitCode = printError(err, json);
     }
     return;
   }
@@ -621,7 +691,7 @@ async function main(): Promise<void> {
       if (args[0] === 'list') listRoutines(json);
       else showRoutine(requirePositional(args, 1, 'name', USAGE['routine show'] ?? ''), json);
     } catch (err) {
-      process.exitCode = printError(err);
+      process.exitCode = printError(err, json);
     }
     return;
   }
@@ -637,7 +707,7 @@ async function main(): Promise<void> {
         throw new UsageError(`--routines expects tools, catalog or off, got "${routines}"`);
       }
     } catch (err) {
-      process.exitCode = printError(err);
+      process.exitCode = printError(err, json);
       return;
     }
     try {
@@ -693,11 +763,10 @@ async function main(): Promise<void> {
     const result = await call(session, method, target.params);
     printResult(session, command, json, result);
   } catch (err) {
-    process.exitCode = printError(err);
+    process.exitCode = printError(err, json);
   }
 }
 
 main().catch((err: unknown) => {
-  console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
+  process.exitCode = printError(err, process.argv.includes('--json'));
 });

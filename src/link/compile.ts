@@ -13,6 +13,7 @@ import type { RequestRecord } from '../core/types.ts';
 import type { ExtractRule, Recipe, RecipeOutput, RecipePart, RecipeRequest } from './recipe.ts';
 import { isWriteRequest, stringifyRecipe } from './recipe.ts';
 import { matchesRequestPattern } from '../flow/format.ts';
+import { describePagination, detectPagination } from './paginate.ts';
 
 export class NotLinkable extends Error {}
 
@@ -515,12 +516,23 @@ export function compileRecipe(input: CompileInput): Recipe {
   }
 
   const usedVars = new Set([...required].flatMap((i) => varsOf(out[i]!)));
+  const lastKept = Math.max(...required);
   const kept: RecipeRequest[] = [];
   for (let i = 0; i < out.length; i++) {
     if (!required.has(i)) continue;
     const request = out[i]!;
     const extract = [...extracts[i]!].filter(([name]) => usedVars.has(name));
     if (extract.length > 0) request.extract = Object.fromEntries(extract);
+    // The run fetched one page; a read routine's product is the whole list.
+    const head = chains[i]!.head;
+    const isProduct = i === lastKept || captured.some((p) => matchesRequestPattern(p, { method: head.method, url: head.url, status: head.status }));
+    if (isProduct && request.method === 'GET' && request.xhr && sources[i]!.json !== undefined) {
+      const paginate = detectPagination(head.url, sources[i]!.json);
+      if (paginate) {
+        request.paginate = paginate;
+        warnings.push(`${request.id}: looks like one page of a list and ${describePagination(paginate)}, up to ${paginate.maxPages} pages; delete its paginate block to read only the recorded page`);
+      }
+    }
     kept.push(request);
   }
   warnings.push(...tokenWarnings.filter((w) => required.has(w.index)).map((w) => w.text));

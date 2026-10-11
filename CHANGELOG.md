@@ -5,6 +5,27 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — standalone clients, and list reads that follow their pages
+
+- **`rastro flow emit <name> --lang ts|py`** writes a standalone client from a
+  fresh recipe: TypeScript that Node >= 22.18 runs as is, or Python with the
+  standard library only. The recipe goes in as data and a small runtime
+  replays it under the HTTP runner's rules, so the client does exactly what
+  the verified recipe does. No credential in the file: the session comes from
+  a Cookie header or the Rastro `cookies.json`, keyring parameters from
+  environment variables. Stale recipes are refused, unverified ones warned.
+- **Pagination.** `flow link` marks a read routine's product request with a
+  `paginate` block when its JSON is one page of a list (a cursor, a next URL,
+  a page number or an offset), and the HTTP runner and emitted clients follow
+  the pages, up to `maxPages`, merging their items before captures read them.
+
+### Changed — `--json` is a versioned envelope (breaking)
+
+- Every `--json` answer is one line, `{"schemaVersion":1,"ok":true,"data":…}`;
+  errors are `{"schemaVersion":1,"ok":false,"error":{"kind","message","hint"}}`
+  on stdout as well as text on stderr. Read `.data` where you read the top
+  level before. Exit codes are in `rastro --help`: 0, 1 runtime, 2 usage.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added — reading a page, and routines that return what they read

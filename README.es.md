@@ -21,6 +21,7 @@ Rastro da al agente el mínimo que un humano percibe (qué se puede interactuar 
 | Investigación a demanda | **sí**, por niveles | no | sí, sin filtrar | no | parcial |
 | Seguro sin humano delante | **write guard + mascarado** | no | no | no | no |
 | Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no |
+| Corrida → cliente de API autónomo | **sí**, determinista (`flow emit`, TS / Python) | no | no | no | no |
 | Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
 
 Los dos diferenciadores reales son la **atribución causal** (ninguna otra
@@ -277,6 +278,58 @@ hosts de la receta, no el resto del perfil.
 **No se puede enlazar, a propósito:** requests firmados por JavaScript de la
 página, WebSockets, tokens de vida corta generados en el navegador, y subidas
 cuyo cuerpo el navegador no expone. Esas rutinas siguen en el navegador.
+
+### Listas: todas las páginas, no solo la grabada
+
+Al enlazar, una rutina de lectura suele haber traído una sola página. Si el
+request producto (el último, o el que nombra un `capture`) es un GET de script
+cuyo JSON parece una página de algo más largo, el enlace agrega un bloque
+`paginate` y lo avisa:
+
+```yaml
+paginate: { query: page, next: { step: 1 }, items: jobs, maxPages: 10 }
+```
+
+Reconoce un cursor de la respuesta que vuelve como parámetro de query
+(`next: { json: meta.next_cursor }`), una URL siguiente del mismo origen
+(`next: { url: next }`), un número de página (`step: 1`) y un offset con
+límite (`step: <límite>`). La corrida HTTP trae las páginas siguientes y une
+sus ítems en la primera respuesta, así los `capture` ven la lista entera. Para
+en `maxPages`, en una página vacía o corta, o cuando se acaba el cursor o la
+URL. Solo paginan las lecturas; borrar el bloque vuelve a la página grabada.
+
+## Clientes autónomos: `flow emit`
+
+Una receta verificada puede salir de Rastro como código, para un job de backend
+o un script en otro repositorio:
+
+```bash
+rastro flow emit publish-file --lang py      # publish_file_client.py, solo biblioteca estándar
+rastro flow emit publish-file --lang ts      # publish-file.client.ts, Node >= 22.18 lo corre tal cual
+```
+
+La receta va en el archivo como datos, con un runtime chico que la reproduce
+con las reglas del runner HTTP: extracción, redirecciones a mano, clases de
+status, paginación y capturas. No se infiere nada: el cliente hace lo que hace
+la receta verificada, al revés de pedirle a un modelo que adivine un cliente a
+partir de un HAR.
+
+- **El archivo no guarda credenciales**, igual que la receta. La sesión la pone
+  quien llama: un header Cookie (`--cookie` / `$COOKIE`) o el `cookies.json`
+  de la sesión de Rastro (`--cookie-file` / `$RASTRO_COOKIES`). Los parámetros
+  del keyring se leen de variables de entorno (`from: secret:api.token` →
+  `$API_TOKEN`, listadas en la cabecera del archivo).
+- **Una receta vieja se rechaza**; una sin verificar se emite con un aviso.
+- Un cliente que escribe lo dice arriba y, si falla, informa las escrituras ya
+  enviadas (`ReplayError.writes`) para no reintentarlas a ciegas.
+
+## Salida para máquinas
+
+Con `--json` cada comando imprime una línea:
+`{"schemaVersion":1,"ok":true,"data":…}` o
+`{"schemaVersion":1,"ok":false,"error":{"kind","message","hint"}}`. El error en
+texto sigue saliendo por stderr. Códigos de salida: `0` éxito, `1` error de
+ejecución, `2` error de uso.
 
 ## Plugin Claude Code
 

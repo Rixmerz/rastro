@@ -37,7 +37,7 @@ export interface Routine {
   link?: RoutineLink;
 }
 
-function readLink(flowFile: string, flowHash: string): RoutineLink | undefined {
+export function readLink(flowFile: string, flowHash: string): RoutineLink | undefined {
   const file = recipePathFor(flowFile);
   if (!existsSync(file)) return undefined;
   try {

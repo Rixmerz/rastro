@@ -41,6 +41,23 @@ export interface RecipeRequest {
   /** Sent by page script, not by a form or a navigation. */
   xhr?: boolean;
   extract?: Record<string, ExtractRule>;
+  /** Follow the next pages of a list response and merge their items. */
+  paginate?: Paginate;
+}
+
+/**
+ * How a GET that answered one page of a list asks for the rest. `items` is
+ * the JSON path of the array each page carries; the pages' items are merged
+ * into that array of the first response, so extraction rules and captures
+ * see every item. Stops at `maxPages`, at an empty page, at a page shorter
+ * than the first (numeric steps), or when the cursor or next URL runs out.
+ */
+export interface Paginate {
+  /** Query parameter that selects the page; not used with `next.url`. */
+  query?: string;
+  next: { json: string } | { step: number } | { url: string };
+  items: string;
+  maxPages: number;
 }
 
 /** A flow's `capture` step, applied to the replayed responses. */
@@ -76,6 +93,21 @@ const partSchema = z.strictObject({
   contentType: z.string().optional(),
 });
 
+const paginateSchema = z
+  .strictObject({
+    query: z.string().optional(),
+    next: z.union([
+      z.strictObject({ json: z.string().min(1) }),
+      z.strictObject({ step: z.number().int().positive() }),
+      z.strictObject({ url: z.string().min(1) }),
+    ]),
+    items: z.string(),
+    maxPages: z.number().int().min(1).max(1000),
+  })
+  .refine((p) => ('url' in p.next ? p.query === undefined : p.query !== undefined), {
+    message: 'paginate needs query with next.json or next.step, and no query with next.url',
+  });
+
 const requestSchema = z.strictObject({
   id: z.string(),
   method: z.string(),
@@ -89,6 +121,7 @@ const requestSchema = z.strictObject({
   expect: z.string().regex(/^[1-5]xx$/).optional(),
   xhr: z.boolean().optional(),
   extract: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), ruleSchema).optional(),
+  paginate: paginateSchema.optional(),
 });
 
 const recipeSchema = z.strictObject({
@@ -124,6 +157,7 @@ export function parseRecipe(text: string): Recipe {
   for (const req of parsed.data.requests) {
     const bodies = [req.form, req.json, req.multipart, req.raw].filter((b) => b !== undefined);
     if (bodies.length > 1) throw new Error(`recipe request ${req.id}: more than one body`);
+    if (req.paginate && isWriteRequest(req)) throw new Error(`recipe request ${req.id}: only a read can paginate`);
   }
   return parsed.data as Recipe;
 }
