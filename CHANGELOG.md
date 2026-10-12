@@ -5,6 +5,8 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-11
+
 ### Added — standalone clients, and list reads that follow their pages
 
 - **`rastro flow emit <name> --lang ts|py`** writes a standalone client from a
@@ -480,6 +482,7 @@ recording.
   high) fixed in full, each with a regression test. The 5 high ones were secret
   leaks through `--json`, snapshots, HAR and `pw-trace`.
 
+[0.4.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.0
