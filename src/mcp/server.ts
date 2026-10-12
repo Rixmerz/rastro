@@ -12,6 +12,7 @@ import { RastroError } from '../core/types.ts';
 import { VERSION } from '../version.ts';
 import type { RpcMethod, RpcResult } from '../core/types.ts';
 import { ensurePrivateDir, routineDirs, routinesStateDir, sessionPaths } from '../core/paths.ts';
+import { discoverProfiles, formatProfiles, loadBinding } from '../core/profiles.ts';
 import type { FlowParam, ToolManifest } from '../flow/format.ts';
 import { describeLink, loadRoutines, type Routine, type RoutineCatalog } from '../routines/registry.ts';
 import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
@@ -128,7 +129,8 @@ export function serverInstructions(exposure: RoutineExposure, routinesOnly: bool
     'Read its result: "retry is safe" means nothing was written; "a write was sent: do NOT retry" or "still running" means check the site or rastro_history before any new attempt.';
   const browser =
     'For anything no routine covers: rastro_open (with allowWrite for hosts that must receive writes), rastro_view to act, rastro_read for the text a page says (view lists only what can be acted on), rastro_act; ' +
-    'each action returns a one-line effect summary, and rastro_effects / rastro_trace / rastro_request dig into what it caused.';
+    'each action returns a one-line effect summary, and rastro_effects / rastro_trace / rastro_request dig into what it caused. ' +
+    "To use the user's own browser profile (their logins), rastro_open with a profile from rastro_profiles; that browser must be closed first, so ask the user to close it and never close it yourself.";
   if (exposure === 'off') return browser;
   if (routinesOnly) return `${routines} This server exposes routines only.`;
   return `${routines} ${browser}`;
@@ -173,12 +175,20 @@ export function createMcpServer(
 
   register(
     'rastro_open',
-    'Opens the browser session, optionally navigating to a URL.',
+    "Opens the browser session, optionally at a URL. profile borrows the user's browser profile, which must be closed first: ask the user.",
     {
       url: z.string().optional(),
       allowWrite: z.array(z.string()).optional(),
       allowUpload: z.array(z.string()).optional(),
       headed: z.boolean().optional(),
+      profile: z
+        .string()
+        .optional()
+        .describe(
+          'browser[:profile] from rastro_profiles (e.g. "brave-origin:Default"), or "rastro" for the session\'s own profile. ' +
+            'Sticks to the session and only takes effect when it is not running. If that browser is open the call fails: ' +
+            'ask the user to close it completely, never close it yourself.',
+        ),
     },
     (a) => ({
       method: 'open',
@@ -187,8 +197,26 @@ export function createMcpServer(
         allowWrite: dropEmpty(a.allowWrite as string[] | undefined),
         allowUpload: dropEmpty(a.allowUpload as string[] | undefined),
         headed: a.headed,
+        profile: a.profile,
       },
     }),
+  );
+
+  server.registerTool(
+    'rastro_profiles',
+    {
+      description: 'Lists browser profiles on this machine a session can borrow, and which are IN USE: the user must close that browser before rastro_open.',
+      inputSchema: { session: sessionField },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) => {
+      const session = resolveSession(args as { session?: string }, defaultSession);
+      try {
+        return { content: [{ type: 'text', text: formatProfiles(discoverProfiles(), loadBinding(sessionPaths(session)), session) }] };
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
   );
 
   register(

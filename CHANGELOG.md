@@ -26,6 +26,32 @@ Versioned with [SemVer](https://semver.org/).
   on stdout as well as text on stderr. Read `.data` where you read the top
   level before. Exit codes are in `rastro --help`: 0, 1 runtime, 2 usage.
 
+### Added — borrowing a browser profile the user already has
+
+A session always ran on a profile of its own, so using the logins of the
+browser the user works in meant logging in again inside Rastro.
+
+- **`rastro profiles`** and **`rastro_profiles`** list the profiles of the
+  installed Chromium-family browsers (Chromium, Chrome, Brave, Brave Origin,
+  Edge, Vivaldi), which one a session uses, and whether each is free or held
+  by an open browser.
+- **`rastro profile use <browser[:profile]>`** and **`open --profile`**
+  (`profile` on `rastro_open`) bind a session to one; `rastro` goes back to
+  the session's own profile. The binding sticks to the session.
+- A profile held by an open browser is refused before launching, with a hint
+  that the user has to close it; the agent-facing docs say never to close it
+  for them. Without the check, Chromium handed the launch to the running
+  browser and Playwright waited out its timeout.
+- A borrowed profile launches with its own browser, keeps the system keyring
+  so its logins decrypt, and is not reseeded. Its saved tabs are copied aside
+  before launch and restored after close, so the user's browser does not
+  reopen Rastro's tabs as the last session.
+- A session cannot switch profiles while running, and two sessions cannot hold
+  the same profile.
+- **`profile use … --allow-write h1,h2`** saves the hosts the session may write
+  to with the binding, used by every `open` that names none. `open`, `profile`
+  and `profiles` say what the session may write.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added — reading a page, and routines that return what they read

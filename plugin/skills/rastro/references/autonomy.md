@@ -108,6 +108,8 @@ Blocked writes are recorded as events in the trace and do not reach the server. 
 
 **The guard covers page traffic, not extensions.** The profile's extensions are enabled, and an extension's background service worker is a separate target: its requests are never blocked and never appear in the trace. A session is only as trustworthy as the extensions in its profile.
 
+**On a borrowed profile, a write goes out as the user.** A session opened with `--profile` carries the user's real logins, so an allowed write publishes, sends or buys with their accounts. The user can save the hosts they trust it with (`rastro profile use brave-origin --allow-write youtube.com`); `open` prints them as `writes allowed to …`. An explicit `--allow-write` replaces that list for one run. Ask before widening it, and never use `'*'` there unless the user asked.
+
 ### Widening permissions on a live session
 
 Discovering mid-task that a host or an upload directory is missing does **not** require closing the session. `open` on an already-open session applies `--allow-write`, `--allow-upload` and `--dialogs` to it in place, and **omitting the url leaves the page exactly where it is** — no navigation, no relaunch, so a half-filled form, a draft, or a site left in edit mode survives:
@@ -152,6 +154,7 @@ Some Rastro commands accept flags that affect page behavior:
 | --- | --- |
 | `--dialogs dismiss` | Dismiss JavaScript dialogs instead of accepting |
 | `--allow-write host1,host2` | Permit non-GET requests only to these hosts |
+| `--profile browser[:profile]` | Borrow an installed browser's profile (it must be closed); `rastro` for the session's own |
 | `--pw-trace` | Record a Playwright trace.zip for export |
 | `--reveal` | Unmask secrets in the current command's output |
 

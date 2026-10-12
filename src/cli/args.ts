@@ -78,7 +78,7 @@ export interface Dispatch {
 }
 
 export const USAGE: Record<string, string> = {
-  open: 'rastro open [url] [--headed] [--allow-write h1,h2] [--allow-upload dir,dir] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n]',
+  open: 'rastro open [url] [--profile browser[:profile]|rastro] [--headed] [--allow-write h1,h2] [--allow-upload dir,dir] [--dialogs accept|dismiss] [--pw-trace] [--quiet-ms n] [--max-window-ms n] [--timeout-ms n]',
   goto: 'rastro goto <url>',
   back: 'rastro back',
   forward: 'rastro forward',
@@ -125,6 +125,8 @@ export const USAGE: Record<string, string> = {
   'routine list': 'rastro routine list',
   'routine show': 'rastro routine show <name>',
   'routine run': 'rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
+  profiles: 'rastro profiles',
+  profile: 'rastro profile [show] | rastro profile use <browser[:profile]> [--allow-write h1,h2] | rastro profile use rastro',
   status: 'rastro status',
   close: 'rastro close',
   mcp: 'rastro mcp [--routines tools|catalog|off] [--routines-only]',
@@ -142,6 +144,7 @@ commands:
   record start|stop, flow save|run|link|emit|export|import
   routine list|show|run
   secret set|list|rm
+  profiles, profile [show|use]
   status, close, kill, mcp
 
 global flags:

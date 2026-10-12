@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { SessionPaths } from '../core/paths.ts';
+import { assertProfileFree, backupSavedSession, loadBinding, restoreSavedSession, type ProfileBinding } from '../core/profiles.ts';
 import { RastroError } from '../core/types.ts';
 
 export interface TabRecord {
@@ -265,17 +266,54 @@ export class Session {
   }
 
   private static async createContext(paths: SessionPaths, opts: SessionOptions): Promise<BrowserContext> {
-    Session.seedSearchEngine(paths.profile);
+    const borrowed = loadBinding(paths);
+    if (borrowed === null) {
+      Session.seedSearchEngine(paths.profile);
+    } else {
+      if (!existsSync(borrowed.executable)) {
+        throw new RastroError(`${borrowed.label} is no longer installed at ${borrowed.executable}`, `bind the profile again: rastro profile use ${borrowed.browser}:${borrowed.profileDirectory}`);
+      }
+      // Checked on every launch, relaunches included: the user may have
+      // reopened their browser while this session sat dead.
+      assertProfileFree(borrowed);
+      backupSavedSession(borrowed, paths.profileSessionsBackup);
+    }
     const headed = opts.headed ?? false;
     const args = [
       '--disable-gpu',
       ...(headed && process.env.WAYLAND_DISPLAY ? ['--ozone-platform=wayland'] : []),
       // Only a hint: a tiling compositor sizes the window itself.
       ...(headed ? ['--window-size=1280,900'] : []),
+      ...(borrowed === null ? [] : [`--profile-directory=${borrowed.profileDirectory}`]),
       ...extensionArgs(),
     ];
-    return chromium.launchPersistentContext(paths.profile, {
-      executablePath: resolveExecutablePath(),
+    /**
+     * A borrowed profile's cookies and saved passwords are encrypted with the
+     * key in the system keyring. Playwright's `--password-store=basic` and
+     * `--use-mock-keychain` swap that for a fixed key, so every login would
+     * read as gone. Dropping them lets the browser pick its store the way it
+     * does when the user starts it, including a distro wrapper's flags file
+     * (`~/.config/brave-origin-flags.conf`), whose switches the wrapper puts
+     * before ours and which `basic` would otherwise override.
+     */
+    const keyringArgs = borrowed === null ? [] : ['--password-store=basic', '--use-mock-keychain'];
+    try {
+      return await Session.launchContext(paths, borrowed, headed, args, keyringArgs);
+    } catch (err) {
+      if (borrowed !== null) restoreSavedSession(borrowed, paths.profileSessionsBackup);
+      throw err;
+    }
+  }
+
+  private static launchContext(
+    paths: SessionPaths,
+    borrowed: ProfileBinding | null,
+    headed: boolean,
+    args: string[],
+    keyringArgs: string[],
+  ): Promise<BrowserContext> {
+    return chromium.launchPersistentContext(borrowed?.userDataDir ?? paths.profile, {
+      executablePath: borrowed?.executable ?? resolveExecutablePath(),
       headless: !headed,
       args,
       /**
@@ -293,7 +331,7 @@ export class Session {
        * `context.route` — they are neither blocked by the allowlist nor
        * counted in the trace.
        */
-      ignoreDefaultArgs: ['--disable-extensions', '--disable-component-extensions-with-background-pages'],
+      ignoreDefaultArgs: ['--disable-extensions', '--disable-component-extensions-with-background-pages', ...keyringArgs],
       // Playwright defaults this off, which adds `--no-sandbox` — a renderer
       // escape away from a profile holding live logins. Keep the sandbox.
       chromiumSandbox: true,
@@ -342,6 +380,7 @@ export class Session {
     // ourselves so its 'close' handler doesn't fire a second, stale crash.
     this.closedByUs = true;
     await this.context.close().catch(() => {});
+    this.restoreBorrowedProfile();
 
     this.tabs.clear();
     this.crashedTabs.clear();
@@ -424,7 +463,23 @@ export class Session {
 
   async close(): Promise<void> {
     this.closedByUs = true;
-    await this.context.close();
+    try {
+      await this.context.close();
+    } finally {
+      this.restoreBorrowedProfile();
+    }
+  }
+
+  /** Gives a borrowed profile its user's saved tabs back once the browser
+   * has exited and written its own. Never throws: a failed restore leaves the
+   * backup in place, and the next launch restores it before anything else. */
+  private restoreBorrowedProfile(): void {
+    try {
+      const borrowed = loadBinding(this.paths);
+      if (borrowed !== null) restoreSavedSession(borrowed, this.paths.profileSessionsBackup);
+    } catch {
+      // Kept for the next launch; see backupSavedSession.
+    }
   }
 
   private allocateTabId(): string {

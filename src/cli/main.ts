@@ -10,6 +10,7 @@ import { RastroError } from '../core/types.ts';
 import type { RpcMethod } from '../core/types.ts';
 import { call, listSessions } from '../daemon/client.ts';
 import { ensurePrivateDir, resolveFlowRef, sessionPaths } from '../core/paths.ts';
+import { describeAllowWrite, describeBinding, discoverProfiles, formatProfiles, inspectLock, loadBinding, OWN_PROFILE, resolveProfileRef, saveBinding } from '../core/profiles.ts';
 import { describeLink, findRoutine, loadRoutines, readLink } from '../routines/registry.ts';
 import { clientFileName, emitClient, envVars, type EmitLang } from '../link/emit.ts';
 import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
@@ -84,6 +85,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
         'quiet-ms': { type: 'string' },
         'max-window-ms': { type: 'string' },
         'timeout-ms': { type: 'string' },
+        profile: { type: 'string' },
       });
       return {
         method: 'open',
@@ -97,6 +99,7 @@ function dispatch(command: string, argv: string[]): Dispatch {
           quietMs: toNumber(str(values['quiet-ms']), '--quiet-ms'),
           maxWindowMs: toNumber(str(values['max-window-ms']), '--max-window-ms'),
           timeoutMs: toNumber(str(values['timeout-ms']), '--timeout-ms'),
+          profile: str(values.profile),
         },
       };
     }
@@ -547,6 +550,79 @@ function killDaemon(session: string, force: boolean): string {
 }
 
 /**
+ * Profile commands run in the CLI: listing reads other browsers' files and
+ * binding only writes the session's `profile.json`, so neither needs the
+ * daemon. Binding is refused while the session runs, because the profile is
+ * a property of the browser process it already launched.
+ */
+async function runProfile(session: string, args: string[], json: boolean): Promise<void> {
+  const [action, ...refParts] = args;
+  const paths = sessionPaths(session);
+  if (action === 'list') {
+    const profiles = discoverProfiles();
+    const bound = loadBinding(paths);
+    if (json) {
+      const rows = profiles.map((p) => ({
+        ref: p.ref,
+        browser: p.browser.id,
+        label: p.browser.label,
+        profileDirectory: p.profileDirectory,
+        profileName: p.profileName ?? null,
+        userDataDir: p.userDataDir,
+        installed: p.executable !== undefined,
+        lock: inspectLock(p.userDataDir),
+      }));
+      printJson({ session, bound, profiles: rows });
+    } else {
+      console.log(formatProfiles(profiles, bound, session));
+    }
+    return;
+  }
+  if (action === undefined || action === 'show') {
+    const bound = loadBinding(paths);
+    if (json) printJson({ session, bound });
+    else if (bound === null) console.log(`${session}: Rastro's own profile`);
+    else console.log(`${session}: ${describeBinding(bound)} (${bound.userDataDir}) · ${describeAllowWrite(bound.allowWrite)} by default`);
+    return;
+  }
+  if (action === 'use') {
+    const { values, positionals } = sub(refParts, { 'allow-write': { type: 'string' } });
+    const ref = positionals.join(' ').trim();
+    if (ref === '') throw new UsageError(`missing profile\nusage: ${USAGE.profile}`);
+    const allowWrite = splitList(str(values['allow-write']));
+    const running = (await listSessions()).some((s) => s.session === session && s.state !== 'stopped');
+    if (running) {
+      throw new RastroError(`session ${session} is running`, `close it first (rastro -s ${session} close); the profile is fixed when the browser starts`);
+    }
+    const resolved = ref.toLowerCase() === OWN_PROFILE ? null : resolveProfileRef(ref);
+    if (resolved === null && allowWrite !== undefined) {
+      throw new UsageError(`--allow-write is saved with a borrowed profile; for Rastro's own profile pass it to open\nusage: ${USAGE.profile}`);
+    }
+    const binding = resolved === null ? null : { ...resolved, ...(allowWrite !== undefined ? { allowWrite } : {}) };
+    ensurePrivateDir(paths.root);
+    saveBinding(paths, binding);
+    if (json) {
+      printJson({ session, bound: binding });
+      return;
+    }
+    if (binding === null) {
+      console.log(`${session}: back on Rastro's own profile`);
+      return;
+    }
+    const lock = inspectLock(binding.userDataDir);
+    const note =
+      lock.state === 'held' && !lock.byRastro
+        ? `\n${binding.label} is open right now (pid ${String(lock.pid)}): close it completely before rastro open`
+        : '';
+    console.log(
+      `${session}: ${describeBinding(binding)} · ${describeAllowWrite(binding.allowWrite)} by default — ${binding.label} must be closed while this session runs${note}`,
+    );
+    return;
+  }
+  throw new UsageError(`unknown "profile ${action}"\nusage: ${USAGE.profile}`);
+}
+
+/**
  * The vault lives entirely in the CLI process: no daemon, no session. A stored
  * value is only ever read again inside the daemon while a flow resolves a
  * `secret:` parameter, which is why there is no plain `get` here.
@@ -638,6 +714,15 @@ async function main(): Promise<void> {
   if (command === 'secret') {
     try {
       runSecret(args, json);
+    } catch (err) {
+      process.exitCode = printError(err, json);
+    }
+    return;
+  }
+
+  if (command === 'profiles' || command === 'profile') {
+    try {
+      await runProfile(session, command === 'profiles' ? ['list'] : args, json);
     } catch (err) {
       process.exitCode = printError(err, json);
     }

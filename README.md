@@ -66,7 +66,8 @@ Optional environment variables:
   Chrome, Brave Browser, Microsoft Edge}.app` on macOS. Point it at a real Google Chrome for sites that
   gate on the `Google Chrome` brand — including the Web Store, which refuses to
   install into anything else. Changing it under an existing profile is not free:
-  pair a new browser with a fresh session name.
+  pair a new browser with a fresh session name. A session that borrows an
+  installed browser's profile ignores it (see below).
 - `RASTRO_EXTENSIONS` — `:`-separated unpacked extension directories to load at
   launch, for extensions a headless replay needs and nobody can click through
   the Web Store for
@@ -402,6 +403,73 @@ With `--json`, every command prints one line:
 `ok: false` with its result in `data`. The text error still goes to stderr.
 Exit codes: `0` success, `1` runtime error, `2` usage error. `schemaVersion`
 changes when the envelope or a command's `data` changes shape.
+
+## Using a browser profile you already have
+
+Every session gets its own profile by default. A session can instead borrow a
+profile of a browser you already use, with its logins, cookies and
+extensions:
+
+```bash
+rastro profiles
+# rastro  Rastro's own profile for session "default"  ← this session
+# chromium:Default  Chromium "Work" · free
+# brave-origin:Default  Brave Origin "Personal" · IN USE: Brave Origin is open (pid 3382), it must be closed before Rastro can use this profile
+
+rastro -s personal profile use brave-origin:Personal   # by directory or by the name the browser shows
+# personal: Brave Origin Default "Personal" · writes blocked everywhere by default — Brave Origin must be closed while this session runs
+rastro -s personal open https://mail.example.test
+# profile: Brave Origin Default "Personal" (the user's own) · Brave Origin must stay closed until this session closes (rastro close)
+
+rastro -s personal close          # gives the profile back
+rastro -s personal profile use rastro   # back to Rastro's own profile
+```
+
+`open --profile <ref>` binds and opens in one step. The binding sticks to the
+session, so routines that name that session use it too. Known browsers:
+`chromium`, `chrome`, `brave`, `brave-origin`, `edge`, `vivaldi`.
+
+Writes stay blocked by default here too, and a borrowed profile is where that
+matters most: every write goes out with your real accounts. The hosts you
+trust the session with can be saved with the binding, so they apply to every
+`open` without repeating them:
+
+```bash
+rastro -s personal profile use brave-origin:Personal --allow-write youtube.com,google.com
+rastro -s personal open https://www.youtube.com
+# profile: Brave Origin Default "Personal" (the user's own) · writes allowed to youtube.com, google.com · ...
+```
+
+An explicit `open --allow-write` replaces the saved list for that run, and
+`--allow-write '*'` allows every host. Binding again without `--allow-write`
+clears the list. Only the CLI saves it; over MCP, `allowWrite` on `rastro_open`
+applies to one run.
+
+**The browser has to be closed first.** Chromium lets one process at a time
+use a profile. If the browser is open, `open` fails at once and says so;
+Rastro never closes it for you. It matters both ways: while a session holds
+the profile, starting the browser by hand hands the new window to Rastro's
+instance (headless by default) instead of opening one. Close the session
+before you use the browser again: a session with its browser open does not
+close itself, however long it sits idle.
+
+What Rastro does to keep the profile yours:
+
+- It launches the browser that owns the profile, never `RASTRO_CHROMIUM`, so
+  a profile is not opened by another brand or an older version.
+- It keeps the system keyring (no `--password-store=basic`), so saved logins
+  can be decrypted. A distro wrapper's flags file, such as
+  `~/.config/brave-origin-flags.conf`, still applies.
+- It does not touch the profile's preferences (no DuckDuckGo seeding).
+- Your saved tabs survive. A browser writes its open tabs as the profile's
+  last session when it closes, so "continue where you left off" would reopen
+  Rastro's tabs. Rastro copies `Sessions/` aside before launching and puts it
+  back after closing. If the session is killed with `kill --force` (or
+  crashes), that copy is kept as `sessions/<name>/profile-sessions-backup.prev`
+  instead of being restored over tabs you may have opened since.
+
+Your open tabs are not restored inside the Rastro session: it starts on a
+blank page with your logins in place.
 
 ## Daemon control
 

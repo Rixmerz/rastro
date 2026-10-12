@@ -18,6 +18,7 @@ import type {
 } from '../core/types.ts';
 import { RastroError } from '../core/types.ts';
 import { ensureSessionDirs, sessionPaths, type SessionPaths } from '../core/paths.ts';
+import { describeAllowWrite, describeBinding, loadBinding, OWN_PROFILE, resolveProfileRef, sameProfile, saveBinding } from '../core/profiles.ts';
 import { TraceStore } from '../store/db.ts';
 import { BodyStore } from '../store/bodies.ts';
 import { SecretRegistry, MASK, isSensitiveFieldName, maskBody, maskHeaders } from '../security/redact.ts';
@@ -62,6 +63,8 @@ const OpenParamsSchema = z.object({
   quietMs: z.number().positive().optional(),
   maxWindowMs: z.number().positive().optional(),
   timeoutMs: z.number().positive().optional(),
+  /** `browser[:profile]` to borrow an installed browser's profile, or `rastro` for the session's own. */
+  profile: z.string().optional(),
 });
 
 const ViewParamsSchema = z.object({
@@ -411,6 +414,24 @@ export class EngineCore implements Engine {
 
   async open(rawParams: Record<string, unknown>): Promise<RpcResult> {
     const params = parse(OpenParamsSchema, rawParams);
+    const launching = !this.session;
+
+    if (params.profile !== undefined) {
+      const wanted = params.profile.trim().toLowerCase() === OWN_PROFILE ? null : resolveProfileRef(params.profile);
+      if (this.session) {
+        // The profile decides the browser process, like headed, but unlike
+        // headed it cannot be switched under the agent's feet: the old one may
+        // be the user's own browser profile, which has to be released first.
+        if (!sameProfile(loadBinding(this.paths), wanted)) {
+          throw new RastroError(
+            'this session is already running on another profile',
+            'close it first (rastro close), or open the profile in another session (-s name)',
+          );
+        }
+      } else {
+        saveBinding(this.paths, wanted);
+      }
+    }
 
     if (!this.session) {
       this.config = {
@@ -421,9 +442,12 @@ export class EngineCore implements Engine {
       };
 
       this.sessionHeaded = params.headed ?? false;
+      // An explicit allowlist wins for this run; otherwise the one saved with
+      // the borrowed profile applies.
+      const allowWrite = params.allowWrite ?? loadBinding(this.paths)?.allowWrite;
       const session = await Session.launch(
         this.paths,
-        { headed: params.headed, allowWrite: params.allowWrite, allowUpload: params.allowUpload, dialogs: params.dialogs },
+        { headed: params.headed, allowWrite, allowUpload: params.allowUpload, dialogs: params.dialogs },
         {
           onPageCreated: (tab: TabRecord) => {
             this.attachPromises.set(tab.page, this.recorder.attach(tab.page, tab.id));
@@ -485,17 +509,24 @@ export class EngineCore implements Engine {
     }
 
     const page = await this.ensureAlive();
-    if (!params.url) {
-      return { text: `session open · ${page.url()}`, data: { url: page.url() } };
+    const result: RpcResult = params.url
+      ? await this.runAction({
+          kind: 'open',
+          source: 'agent',
+          perform: async (page) => {
+            await page.goto(params.url!, { timeout: this.config.timeoutMs });
+          },
+        })
+      : { text: `session open · ${page.url()}`, data: { url: page.url() } };
+    const borrowed = launching ? loadBinding(this.paths) : null;
+    if (borrowed !== null) {
+      // Said on every launch, because the inverse mistake is silent: starting
+      // the browser by hand while Rastro holds its profile hands the new
+      // window to Rastro's (often headless) instance instead of opening one.
+      const writes = describeAllowWrite(this.session!.allowWrite);
+      result.text = `profile: ${describeBinding(borrowed)} (the user's own) · ${writes} · ${borrowed.label} must stay closed until this session closes (rastro close)\n${result.text}`;
     }
-
-    return this.runAction({
-      kind: 'open',
-      source: 'agent',
-      perform: async (page) => {
-        await page.goto(params.url!, { timeout: this.config.timeoutMs });
-      },
-    });
+    return result;
   }
 
   async goto(rawParams: Record<string, unknown>): Promise<RpcResult> {

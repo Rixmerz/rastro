@@ -1,6 +1,6 @@
 ---
 name: rastro
-description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath. Also runs saved routines (a recorded site task exposed as a tool with typed params, some replayed over plain HTTP without a browser): check `rastro routine list` before browsing a site the user works with, and use this skill to make, run or link one.
+description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath. Also runs saved routines (a recorded site task exposed as a tool with typed params, some replayed over plain HTTP without a browser): check `rastro routine list` before browsing a site the user works with, and use this skill to make, run or link one. Can also borrow a browser profile the user already has (their logins) with `rastro profiles` / `open --profile`, once the user has closed that browser.
 allowed-tools: Bash(rastro:*)
 ---
 
@@ -24,7 +24,7 @@ Navigation and actions use refs that expire after the page changes; run `view` a
 
 **Actions:** `click <ref>`, `fill <ref> <value>`, `type <ref> <value>`, `press <ref|-> <key>`, `check <ref>`, `hover <ref>`. Every action waits for the page to settle (500 ms quiet) before returning.
 
-**Navigation:** `open [url] [--allow-write h1,h2]` (start session, permit writes to hosts), `goto <url>`, `back`, `forward`, `reload`.
+**Navigation:** `open [url] [--allow-write h1,h2] [--profile browser[:profile]]` (start session, permit writes to hosts, borrow one of the user's browser profiles), `goto <url>`, `back`, `forward`, `reload`.
 
 **Investigation:** `effects <id> [--all]` (requests, cookies, DOM changes, errors), `request <id> [--curl] [--reveal]` (headers, body snippet, curl command), `snapshot <id> --before|--after` (page view at that moment), `trace [--action id]` (full event log).
 
@@ -51,6 +51,14 @@ Use `effects 4` to see which requests the action triggered, then `request r31 --
 **Never use `--reveal` or `replay` unless you asked for it.** The user must be explicit if secrets should appear in your output. `replay` requires `--yes` because it has real side effects.
 
 **Writes are guarded, including the site you opened.** Every POST/PUT/PATCH/DELETE (logins and form submits too) is blocked unless its host was allowed at `open`: `rastro open https://shop.test/login --allow-write shop.test`. A blocked write shows as `1 write blocked (host)` in the summary. Only allow the hosts the task needs.
+
+## The user's own browser profile
+
+A session can borrow a profile of a browser the user already has, with their logins: `rastro profiles` lists them, `rastro -s <name> open <url> --profile brave-origin:Default` uses one (it sticks to that session; `--profile rastro` goes back).
+
+**That browser must be closed first, and closing it is the user's call.** If `profiles` marks it `IN USE` or `open` fails with "is open (pid …)", stop and ask the user to close it completely, then retry. Never kill or close the user's browser yourself. When done, `rastro -s <name> close` so the user can open their browser again.
+
+Writes stay blocked unless allowed, and on the user's profile they go out as the user. `open` says which hosts the session may write to (the user may have saved some with `rastro profile use … --allow-write`); ask before widening it, and never pass `--allow-write '*'` on the user's profile unless they asked for it.
 
 ## Routines first
 

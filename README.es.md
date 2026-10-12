@@ -377,6 +377,55 @@ rastro export perfetto [path]   # Chrome Trace Event Format para ui.perfetto.dev
 rastro export pw-trace [path]   # Playwright trace.zip (si se abrió con --pw-trace)
 ```
 
+## Usar un perfil de navegador que ya tienes
+
+Por defecto cada sesión tiene su propio perfil. Una sesión puede, en cambio,
+usar prestado el perfil de un navegador que ya usas, con sus logins, cookies y
+extensiones:
+
+```bash
+rastro profiles
+rastro -s personal profile use brave-origin:Personal   # por carpeta o por el nombre que muestra el navegador
+rastro -s personal open https://mail.example.test
+rastro -s personal close                 # devuelve el perfil
+rastro -s personal profile use rastro    # vuelve al perfil propio de Rastro
+```
+
+`open --profile <ref>` enlaza y abre en un paso. El enlace queda en la sesión,
+así que las rutinas que usan esa sesión también lo usan. Navegadores conocidos:
+`chromium`, `chrome`, `brave`, `brave-origin`, `edge`, `vivaldi`.
+
+Las escrituras siguen bloqueadas por defecto, y con un perfil prestado es donde
+más importa: cada escritura sale con tus cuentas reales. Los hosts en los que
+confías se pueden guardar con el enlace, y aplican a cada `open` sin repetirlos:
+
+```bash
+rastro -s personal profile use brave-origin:Personal --allow-write youtube.com,google.com
+```
+
+Un `open --allow-write` explícito reemplaza la lista guardada en esa ejecución, y
+`--allow-write '*'` permite todos los hosts. Volver a enlazar sin
+`--allow-write` borra la lista. Solo el CLI la guarda; por MCP, `allowWrite` en
+`rastro_open` vale para una ejecución.
+
+**El navegador tiene que estar cerrado antes.** Chromium deja que un solo
+proceso use un perfil a la vez. Si el navegador está abierto, `open` falla de
+inmediato y lo dice; Rastro nunca lo cierra por ti. Vale en ambos sentidos:
+mientras una sesión tiene el perfil, abrir el navegador a mano entrega la
+ventana nueva a la instancia de Rastro (headless por defecto). Cierra la sesión
+antes de volver a usar el navegador: una sesión con el navegador abierto no se
+cierra sola, por mucho que esté inactiva.
+
+Para que el perfil siga siendo tuyo, Rastro lanza el navegador dueño del perfil
+(nunca `RASTRO_CHROMIUM`), mantiene el llavero del sistema (sin
+`--password-store=basic`), no toca las preferencias del perfil, y respalda
+`Sessions/` antes de lanzar y lo restaura al cerrar, para que "continuar donde
+lo dejaste" abra tus pestañas y no las de Rastro. Si la sesión muere con
+`kill --force`, ese respaldo queda en
+`sessions/<nombre>/profile-sessions-backup.prev` en vez de pisar pestañas más
+nuevas. Tus pestañas abiertas no aparecen dentro de la sesión de Rastro: parte
+en blanco, con tus logins.
+
 ## Control de daemons
 
 Cada sesión tiene su daemon. `ps` lo muestra como `rastro[<sesión>]` y su pid

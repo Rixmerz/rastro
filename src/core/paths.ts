@@ -98,6 +98,10 @@ export interface SessionPaths {
   pid: string;
   /** Cookie jar exported for HTTP replays of linked flows (mode 0600). */
   cookies: string;
+  /** Which existing browser profile this session borrows, if any (see core/profiles.ts). */
+  profileBinding: string;
+  /** The user's saved tabs, copied aside while a borrowed profile is in use. */
+  profileSessionsBackup: string;
 }
 
 export function sessionPaths(name: string): SessionPaths {
@@ -115,6 +119,8 @@ export function sessionPaths(name: string): SessionPaths {
     socket: join(runtimeDir(), `${name}.sock`),
     pid: join(root, 'daemon.pid'),
     cookies: join(root, 'cookies.json'),
+    profileBinding: join(root, 'profile.json'),
+    profileSessionsBackup: join(root, 'profile-sessions-backup'),
   };
 }
 

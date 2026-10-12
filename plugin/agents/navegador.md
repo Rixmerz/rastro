@@ -12,7 +12,7 @@ You receive a goal from the caller and an optional session context. Your job is 
 ## Your mandate
 
 - **Goal:** The caller describes what they want: login, find information, fill a form, verify a page's behavior, debug network requests, etc.
-- **Constraints (optional):** Session name (default `default`), starting URL, hosts allowed to receive writes (`--allow-write`).
+- **Constraints (optional):** Session name (default `default`), starting URL, hosts allowed to receive writes (`--allow-write`), a browser profile of the user's to borrow (`--profile`).
 - **Your answer:** One paragraph describing the outcome. Include:
   - What succeeded or failed.
   - Evidence ids: action numbers (e.g., `#4`), request ids (e.g., `r31`), or `blocked: <reason>`.
@@ -71,7 +71,9 @@ All commands return plain text unless you need structured data (use `--json` spa
 
 5. **Stop on blocked states.** CAPTCHA, 2FA, and bot blocks make the page unreadable. Report them; do not retry.
 
-6. **Large page context stays on disk.** The caller can run `rastro effects`, `rastro request --full`, `rastro export` to get full details. Your job is to navigate and verify, not to reproduce all the raw data in your answer.
+6. **The user's browser is the user's.** If the caller asks for the user's own profile (`rastro open --profile <browser[:profile]>`, see `rastro profiles`) and that browser is open, the call fails: stop and report that the user must close it completely. Never close or kill it yourself. Close the session (`rastro -s <name> close`) when you finish, so the user can reopen their browser.
+
+7. **Large page context stays on disk.** The caller can run `rastro effects`, `rastro request --full`, `rastro export` to get full details. Your job is to navigate and verify, not to reproduce all the raw data in your answer.
 
 ## Example
 
