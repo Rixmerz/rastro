@@ -424,9 +424,12 @@ rastro flood resume shop-test --from S4 --depth +2   # flood one branch deeper
   in once.
 - **States, not URLs.** A screen is its URL template plus its controls, so
   `/orders/1` and `/orders/2` are one state, and a dialog opened in place is
-  another. A worker reaches a state by its URL, then the clicks that led
-  there. Thirty links to the same template are tried once. A header or nav
-  control is tried once per flood.
+  another. Ids, numbers inside names (`page-{n}.html`) and `index.html` are
+  folded. Slugs are learned from sibling links: five links that differ only
+  in one segment (`/tag/love/`, `/tag/life/`, …) make it `{slug}`. A worker
+  reaches a state by its URL, then the clicks that led there. Thirty links to
+  the same template are tried once, the 20 identical «Add to basket» buttons
+  of a list once, and a header or nav control once per flood.
 - **Polite, never stealthy.** The default rate is 2 actions per second per
   host, across all workers, with jitter and a concurrency cap. A 429 or 503
   halves the rate and honours `Retry-After`. robots.txt is respected unless

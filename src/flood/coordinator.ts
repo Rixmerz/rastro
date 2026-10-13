@@ -10,8 +10,8 @@ import { ensurePrivateDir } from '../core/paths.ts';
 import { Frontier, type FloodItem } from './frontier.ts';
 import { HostLimiter, parseRetryAfter, realClock, type Clock } from './rate.ts';
 import { denyReason, hostOf, isExternal, parseRobots } from './policy.ts';
-import { urlTemplate } from './state.ts';
-import { addEndpoint, formatMapMd, isEndpoint, newMap, summaryLine, type FloodLimits, type FloodMap, type MapState } from './map.ts';
+import { PathLearner } from './templates.ts';
+import { addEndpoint, formatMapMd, isEndpoint, mergeEndpoints, newMap, summaryLine, type FloodLimits, type FloodMap, type MapState, type PathOf } from './map.ts';
 import type { SeedState, StateView, StepRequest, StepResult } from './protocol.ts';
 
 export type CallFn = (
@@ -105,8 +105,21 @@ class Flood {
   private readonly log: (line: string) => void;
   private readonly fetchText: (url: string) => Promise<string | undefined>;
   private readonly robots = new Map<string, Promise<(path: string) => boolean>>();
-  /** URL templates of links already queued somewhere. */
-  private readonly linkClaims = new Set<string>();
+  /** Slugs learned from the links seen so far. */
+  private readonly learner = new PathLearner();
+  private readonly pathOf: PathOf = (url) => {
+    try {
+      const u = new URL(url);
+      const names = [...new Set([...u.searchParams.keys()])].sort();
+      const query = names.length > 0 ? `?${names.map((n) => `${n}=`).join('&')}` : '';
+      return { host: u.host, path: `${this.learner.templatePath(u.host, u.pathname)}${query}` };
+    } catch {
+      return { host: '', path: url };
+    }
+  };
+  /** Target URLs of links already queued; compared by their template as it
+   * is now, so a slug learned later still catches them. */
+  private readonly linkClaims: string[] = [];
   /** `stateTemplate::key` of elements queued, and chrome keys flood-wide. */
   private readonly keyClaims = new Set<string>();
   private readonly hostBlocks = new Map<string, number>();
@@ -152,7 +165,8 @@ class Flood {
     for (const s of this.map.states) {
       for (const el of s.elements) {
         if (el.outcome === 'skipped:duplicate-link' || el.outcome === 'skipped:seen') continue;
-        if (el.role === 'link' && el.url !== undefined) this.linkClaims.add(urlTemplate(el.url));
+        if (el.url !== undefined) this.learner.observe(el.url);
+        if (el.role === 'link' && el.url !== undefined) this.linkClaims.push(el.url);
         this.keyClaims.add(this.claimKey(s, el.key, el.region));
       }
     }
@@ -186,6 +200,12 @@ class Flood {
     return this.map.states.find((s) => s.id === id);
   }
 
+  /** A state's identity: its URL template, slugs learned so far folded, and
+   * its structure. */
+  private stateKey(url: string, structure: string): string {
+    return `${this.learner.template(url)}#${structure}`;
+  }
+
   private claimKey(state: MapState, key: string, region: string): string {
     return CHROME_REGIONS.has(region) ? `*::${key}` : `${state.urlTemplate}::${key}`;
   }
@@ -207,13 +227,15 @@ class Flood {
   }
 
   private async addState(view: StateView, depth: number, path: MapState['path'], parent?: MapState, via?: string): Promise<MapState> {
+    for (const el of view.elements) if (el.url !== undefined) this.learner.observe(el.url);
     const state: MapState = {
       id: `S${String(this.map.states.length + 1)}`,
       depth,
       url: view.url,
-      urlTemplate: urlTemplate(view.url),
+      urlTemplate: this.learner.template(view.url),
       title: view.title,
       hash: view.hash,
+      structure: view.structure,
       path,
       status: depth > this.opts.depth ? 'unvisited' : 'ok',
       elements: view.elements.map((e) => ({ ...e, outcome: 'pending' })),
@@ -236,6 +258,12 @@ class Flood {
         el.outcome = 'skipped:disabled';
         continue;
       }
+      // The 2nd to 20th «Add to basket» of a list do to their item what the
+      // first does to its own: one is enough to learn the call.
+      if (el.role !== 'link' && !el.key.endsWith('|0')) {
+        el.outcome = 'skipped:repeat';
+        continue;
+      }
       const deny = denyReason(el.name, { skip: this.opts.skip, include: this.opts.include });
       if (deny !== undefined) {
         el.outcome = `skipped:${deny}`;
@@ -251,12 +279,12 @@ class Flood {
           el.outcome = 'skipped:robots';
           continue;
         }
-        const template = urlTemplate(el.url);
-        if (this.linkClaims.has(template)) {
+        const template = this.learner.template(el.url);
+        if (this.linkClaims.some((u) => this.learner.template(u) === template)) {
           el.outcome = 'skipped:duplicate-link';
           continue;
         }
-        this.linkClaims.add(template);
+        this.linkClaims.push(el.url);
       }
       if (depth > this.opts.depth) {
         this.map.unexplored.push({ state: state.id, key: el.key, depth });
@@ -449,7 +477,7 @@ class Flood {
       }
       const seed = await this.addState(result.before, 0, { start: this.opts.url, keys: [] });
       for (const req of result.requests) {
-        if (isEndpoint(req)) seed.load.push(addEndpoint(this.map, req, w.name, { state: seed.id }));
+        if (isEndpoint(req)) seed.load.push(addEndpoint(this.map, req, w.name, { state: seed.id }, this.pathOf));
       }
       seed.load = [...new Set(seed.load)];
       return;
@@ -476,7 +504,7 @@ class Flood {
 
     if (result.activated) el.action = { worker: w.name, id: result.activated.action };
     const trigger = { state: state.id, key: el.key, name: el.name };
-    const endpoints = result.requests.filter((r) => r.phase === 'activate' && isEndpoint(r)).map((r) => addEndpoint(this.map, r, w.name, trigger));
+    const endpoints = result.requests.filter((r) => r.phase === 'activate' && isEndpoint(r)).map((r) => addEndpoint(this.map, r, w.name, trigger, this.pathOf));
     if (endpoints.length > 0) el.endpoints = [...new Set(endpoints)];
 
     if (result.activated?.error !== undefined) {
@@ -489,18 +517,27 @@ class Flood {
       el.outcome = `blocked:${result.blocked}`;
       return;
     }
+    if (result.after.url.startsWith('chrome-error:')) {
+      // The navigation failed in the browser: most often a form post the
+      // write guard aborted, which leaves Chromium on its error page.
+      el.outcome = result.requests.some((r) => r.phase === 'activate' && r.blocked) ? 'blocked-write' : 'error';
+      if (el.outcome === 'error') el.error = 'navigation failed';
+      delete w.current;
+      return;
+    }
     if (result.after.url !== '' && isExternal(result.after.url, hostOf(this.opts.url))) {
       el.outcome = 'external';
       this.map.external.push({ state: state.id, name: el.name, url: result.after.url });
       delete w.current;
       return;
     }
-    if (result.after.hash === result.before.hash || result.after.hash === state.hash) {
+    if (result.after.hash === result.before.hash || result.after.hash === state.hash || this.stateKey(result.after.url, result.after.structure) === this.stateKey(state.url, state.structure)) {
       el.outcome = 'same';
       el.to = state.id;
       return;
     }
-    let target = this.map.states.find((s) => s.hash === result.after.hash);
+    const key = this.stateKey(result.after.url, result.after.structure);
+    let target = this.map.states.find((s) => s.hash === result.after.hash || this.stateKey(s.url, s.structure) === key);
     if (!target) {
       const path = result.navigated ? { start: result.after.url, keys: [] } : { start: state.path.start, keys: [...state.path.keys, el.key] };
       target = await this.addState(result.after, state.depth + 1, path, state, el.name);
@@ -526,6 +563,8 @@ class Flood {
 
   save(): void {
     this.map.updatedAt = new Date().toISOString();
+    mergeEndpoints(this.map, this.pathOf);
+    for (const s of this.map.states) s.urlTemplate = this.learner.template(s.url);
     for (const h of this.map.hosts) h.rate = this.limiter.rateOf(h.host);
     const paths = mapPaths(this.opts.dir);
     writeFileSync(`${paths.json}.tmp`, `${JSON.stringify(this.map, null, 1)}\n`, { mode: 0o600 });

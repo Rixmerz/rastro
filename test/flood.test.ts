@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { RpcMethod, RpcResult } from '../src/core/types.ts';
-import { elementKeys, endpointTemplate, normalizeName, stateHash, urlTemplate } from '../src/flood/state.ts';
+import { elementKeys, endpointTemplate, normalizeName, stateHash, structureHash, urlTemplate } from '../src/flood/state.ts';
+import { PathLearner } from '../src/flood/templates.ts';
+import { mergeEndpoints } from '../src/flood/map.ts';
 import { denyReason, fillerFor, isExternal, parseRobots, registrableDomain } from '../src/flood/policy.ts';
 import { Frontier } from '../src/flood/frontier.ts';
 import { HostLimiter, parseRetryAfter, type Clock } from '../src/flood/rate.ts';
@@ -22,6 +24,10 @@ describe('state identity', () => {
     expect(urlTemplate('https://shop.test/orders/123?page=2#top')).toBe('shop.test/orders/{id}');
     expect(urlTemplate('https://shop.test/u/3f2a9c7e-1b2c-4d5e-8f90-123456789abc/edit')).toBe('shop.test/u/{id}/edit');
     expect(urlTemplate('https://app.test/#/cart/9')).toBe('app.test/#/cart/{id}');
+    expect(urlTemplate('https://b.test/catalogue/page-2.html')).toBe('b.test/catalogue/page-{n}.html');
+    expect(urlTemplate('https://b.test/category/books_1/index.html')).toBe('b.test/category/books_{n}/');
+    expect(urlTemplate('https://b.test/index.html')).toBe(urlTemplate('https://b.test/'));
+    expect(endpointTemplate('https://b.test/index.html').path).toBe('/index.html');
     expect(endpointTemplate('https://api.test/v1/items/42?b=1&a=2&a=3')).toEqual({ host: 'api.test', path: '/v1/items/{id}?a=&b=' });
   });
 
@@ -37,6 +43,45 @@ describe('state identity', () => {
     const withDialog = elementKeys(items({ name: 'Comprar' }, { role: 'link', name: 'A' }, { role: 'link', name: 'B' }, { name: 'Cerrar', region: 'dialog' }));
     expect(stateHash('https://s.test/p/1', base)).toBe(stateHash('https://s.test/p/2', otherLinks));
     expect(stateHash('https://s.test/p/1', base)).not.toBe(stateHash('https://s.test/p/1', withDialog));
+  });
+});
+
+describe('learned slugs', () => {
+  test('sibling links that differ in one named segment make it a slug', () => {
+    const l = new PathLearner();
+    for (const tag of ['love', 'life', 'humor', 'books', 'inspirational']) l.observe(`https://q.test/tag/${tag}/page/1/`);
+    expect(l.template('https://q.test/tag/reading/page/2/')).toBe('q.test/tag/{slug}/page/{id}/');
+    expect(l.templatePath('q.test', '/tag/love/page/1/')).toBe('/tag/{slug}/page/{id}/');
+  });
+
+  test('with and without a trailing slash are one family', () => {
+    const l = new PathLearner();
+    for (const a of ['Jane-Austen', 'Mark-Twain', 'Steve-Martin', 'J-K-Rowling', 'Andre-Gide']) l.observe(`https://q.test/author/${a}`);
+    expect(l.template('https://q.test/author/Albert-Einstein/')).toBe('q.test/author/{slug}/');
+  });
+
+  test('too few siblings, or top-level pages, stay literal', () => {
+    const l = new PathLearner();
+    for (const p of ['login', 'about', 'contact', 'help', 'terms', 'privacy']) l.observe(`https://q.test/${p}`);
+    for (const a of ['Jane-Austen', 'Mark-Twain']) l.observe(`https://q.test/author/${a}`);
+    expect(l.template('https://q.test/login')).toBe('q.test/login');
+    expect(l.template('https://q.test/author/Jane-Austen')).toBe('q.test/author/Jane-Austen');
+  });
+
+  test('endpoints recorded before a slug was learned are merged into one', () => {
+    const map = newMap('t', 'https://q.test/', 'd', { depth: 1, budget: 1, timeMs: 1, workers: 1, rate: 1, concurrency: 1, ignoreRobots: false, skip: [], include: [], fill: true }, ['w1']);
+    const tags = ['love', 'life', 'humor', 'books', 'inspirational'];
+    for (const [i, tag] of tags.entries()) {
+      addEndpoint(map, { id: `r${String(i)}`, action: i, phase: 'activate', method: 'GET', url: `https://q.test/tag/${tag}/`, resourceType: 'document', status: 200 }, 'w1', { state: 'S1', key: `k${String(i)}` });
+    }
+    map.states.push({ id: 'S1', depth: 0, url: 'https://q.test/', urlTemplate: 'q.test/', title: '', hash: 'h', structure: 's', path: { start: 'https://q.test/', keys: [] }, status: 'ok', load: [], elements: [{ key: 'k4', role: 'link', name: 'x', region: 'main', outcome: 'done', endpoints: ['E5'] }] });
+    expect(map.endpoints).toHaveLength(5);
+    const l = new PathLearner();
+    for (const tag of tags) l.observe(`https://q.test/tag/${tag}/`);
+    mergeEndpoints(map, (url) => ({ host: new URL(url).host, path: l.templatePath(new URL(url).host, new URL(url).pathname) }));
+    expect(map.endpoints).toHaveLength(1);
+    expect(map.endpoints[0]).toMatchObject({ id: 'E1', path: '/tag/{slug}/', count: 5 });
+    expect(map.states[0]!.elements[0]!.endpoints).toEqual(['E1']);
   });
 });
 
@@ -146,7 +191,7 @@ describe('map', () => {
 
   test('a small budget cuts sections and says how much is left', () => {
     const map = newMap('t', 'https://s.test/', 'default', { depth: 1, budget: 1, timeMs: 1, workers: 1, rate: 1, concurrency: 1, ignoreRobots: false, skip: [], include: [], fill: true }, ['w1']);
-    for (let i = 0; i < 200; i++) addEndpoint(map, req({ url: `https://s.test/api/thing${String(i)}` }), 'w1', { state: 'S1' });
+    for (let i = 0; i < 200; i++) addEndpoint(map, req({ url: `https://s${String(i)}.test/api/thing` }), 'w1', { state: 'S1' });
     const md = formatMapMd(map, 300);
     expect(md).toMatch(/… \d+ more \(map\.json\)/);
     expect(md.length).toBeLessThan(2500);
@@ -197,7 +242,7 @@ class FakeSite {
   private view(id: string) {
     const page = this.pages[id]!;
     const withRefs = elementKeys(items(...page.els.map((e) => ({ role: e.role ?? 'button', name: e.name, region: e.region ?? 'main', ...(e.url ? { url: e.url } : {}) }))));
-    return { url: page.url, title: page.title, hash: stateHash(page.url, withRefs), elements: withRefs.map(({ ref: _r, ...rest }) => rest) };
+    return { url: page.url, title: page.title, hash: stateHash(page.url, withRefs), structure: structureHash(withRefs), elements: withRefs.map(({ ref: _r, ...rest }) => rest) };
   }
 
   private pageByUrl(url: string): string {
@@ -370,6 +415,25 @@ describe('coordinator', () => {
   test('robots.txt that disallows the start page refuses the flood', async () => {
     const site = new FakeSite(tree());
     await expect(runFlood(opts({ ignoreRobots: false }), { call: site.call, fetchText: () => Promise.resolve('User-agent: *\nDisallow: /\n') })).rejects.toThrow(/robots\.txt disallows/);
+  });
+
+  test('a form post the guard stopped is a blocked write, not an external link', async () => {
+    const pages = tree();
+    pages.b!.els = [{ name: 'Entrar', to: 'err', requests: [{ method: 'POST', blocked: true, resourceType: 'write' }] }];
+    pages.err = { url: 'chrome-error://chromewebdata/', title: '', els: [] };
+    const site = new FakeSite(pages);
+    const map = await runFlood(opts({ workers: 1 }), { call: site.call });
+    expect(map.states.find((s) => s.title === 'b')!.elements[0]!.outcome).toBe('blocked-write');
+    expect(map.external).toEqual([]);
+    expect(map.states.some((s) => s.url.startsWith('chrome-error'))).toBe(false);
+  });
+
+  test('identical controls in a list: only the first is tried', async () => {
+    const pages = tree();
+    pages.b!.els = [{ name: 'Añadir' }, { name: 'Añadir' }, { name: 'Añadir' }];
+    const site = new FakeSite(pages);
+    const map = await runFlood(opts({ workers: 1 }), { call: site.call });
+    expect(map.states.find((s) => s.title === 'b')!.elements.map((e) => e.outcome)).toEqual(['same', 'skipped:repeat', 'skipped:repeat']);
   });
 
   test('a page that loops back is the same state, not a new one', async () => {

@@ -8,7 +8,8 @@ import { endpointTemplate } from './state.ts';
 export const MAP_VERSION = 1;
 
 export interface MapElement extends StateElement {
-  /** queued | done | same | error | blocked:<reason> | skipped:<why> | external | pending */
+  /** queued | done | same | blocked-write | error | blocked:<reason> | skipped:<why> | external | unreachable | pending
+   * (skipped: denylist, skip, robots, duplicate-link, repeat, seen, disabled) */
   outcome: string;
   /** State the activation led to. */
   to?: string;
@@ -23,7 +24,10 @@ export interface MapState {
   url: string;
   urlTemplate: string;
   title: string;
+  /** The exact page this state was first seen as (what a worker checks). */
   hash: string;
+  /** Its structure alone; with the learned URL template, the state's identity. */
+  structure: string;
   /** How a worker gets here: a URL, then element keys clicked from it. */
   path: { start: string; keys: string[] };
   parent?: string;
@@ -115,6 +119,12 @@ function bodyFields(body: string | undefined): string[] {
   return [...new Set(multipart)];
 }
 
+/** An endpoint's host and path template; the flood passes one that knows
+ * the slugs it learned. */
+export type PathOf = (url: string) => { host: string; path: string };
+
+const defaultPathOf: PathOf = endpointTemplate;
+
 const MAX_SAMPLES = 5;
 const MAX_TRIGGERS = 20;
 
@@ -124,8 +134,9 @@ export function addEndpoint(
   req: StepRequest,
   worker: string,
   trigger: { state: string; key?: string; name?: string },
+  pathOf: PathOf = defaultPathOf,
 ): string {
-  const { host, path } = endpointTemplate(req.url);
+  const { host, path } = pathOf(req.url);
   const method = req.method.toUpperCase();
   let ep = map.endpoints.find((e) => e.method === method && e.host === host && e.path === path);
   if (!ep) {
@@ -165,6 +176,46 @@ export function addEndpoint(
     ep.samples.push(sample);
   }
   return ep.id;
+}
+
+/**
+ * Folds endpoints that a template learned later says are one (`/tag/love/`
+ * and `/tag/life/` once `/tag/{slug}/` is known). The first-created id
+ * survives and references to the others are rewritten.
+ */
+export function mergeEndpoints(map: FloodMap, pathOf: PathOf): void {
+  const survivors = new Map<string, MapEndpoint>();
+  const renamed = new Map<string, string>();
+  const kept: MapEndpoint[] = [];
+  for (const ep of map.endpoints) {
+    const sample = ep.samples[0];
+    const path = sample ? pathOf(sample.url).path : ep.path;
+    const key = `${ep.method} ${ep.host}${path}`;
+    const into = survivors.get(key);
+    if (!into) {
+      ep.path = path;
+      survivors.set(key, ep);
+      kept.push(ep);
+      continue;
+    }
+    renamed.set(ep.id, into.id);
+    into.count += ep.count;
+    into.blockedWrite ||= ep.blockedWrite;
+    for (const field of ['statuses', 'failures', 'mimeTypes', 'resourceTypes', 'fields'] as const) {
+      for (const v of ep[field] as (string | number)[]) if (!(into[field] as (string | number)[]).includes(v)) (into[field] as (string | number)[]).push(v);
+    }
+    for (const t of ep.triggers) {
+      if (into.triggers.length < MAX_TRIGGERS && !into.triggers.some((x) => x.state === t.state && x.key === t.key)) into.triggers.push(t);
+    }
+    for (const sm of ep.samples) if (into.samples.length < MAX_SAMPLES) into.samples.push(sm);
+  }
+  if (renamed.size === 0) return;
+  map.endpoints = kept;
+  const remap = (ids: string[]): string[] => [...new Set(ids.map((id) => renamed.get(id) ?? id))];
+  for (const st of map.states) {
+    st.load = remap(st.load);
+    for (const el of st.elements) if (el.endpoints) el.endpoints = remap(el.endpoints);
+  }
 }
 
 export function newMap(name: string, seedUrl: string, session: string, limits: FloodLimits, workers: string[]): FloodMap {
@@ -224,7 +275,7 @@ function stateLine(s: MapState): string {
   const indent = '  '.repeat(Math.min(s.depth, 8));
   const via = s.via !== undefined ? ` ← ${quote(s.via, 40)}` : '';
   const status = s.status === 'ok' ? '' : ` [${s.status}${s.reason ? `: ${sanitize(s.reason, 60)}` : ''}]`;
-  const done = s.elements.filter((e) => e.outcome === 'done' || e.outcome === 'same').length;
+  const done = s.elements.filter((e) => e.outcome === 'done' || e.outcome === 'same' || e.outcome === 'blocked-write').length;
   return `${indent}${s.id} ${sanitize(s.urlTemplate, 100)} ${quote(s.title, 50)}${via} · ${String(done)}/${String(s.elements.length)} tried${status}`;
 }
 

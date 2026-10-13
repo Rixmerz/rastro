@@ -29,6 +29,9 @@ interface HostState {
   pausedUntil: number;
   lastPenalty: number;
   waiters: (() => void)[];
+  /** Resolves when the previous caller's wait is over: turns are taken in
+   * order even when two timers would fire in the same millisecond. */
+  turn: Promise<void>;
 }
 
 export class HostLimiter {
@@ -48,7 +51,7 @@ export class HostLimiter {
   private host(name: string): HostState {
     let h = this.hosts.get(name);
     if (!h) {
-      h = { rate: this.opts.rate, nextAt: 0, inFlight: 0, pausedUntil: 0, lastPenalty: 0, waiters: [] };
+      h = { rate: this.opts.rate, nextAt: 0, inFlight: 0, pausedUntil: 0, lastPenalty: 0, waiters: [], turn: Promise.resolve() };
       this.hosts.set(name, h);
     }
     return h;
@@ -76,10 +79,19 @@ export class HostLimiter {
     const interval = 1000 / h.rate;
     const spread = interval * this.jitter * (this.random() * 2 - 1);
     h.nextAt = slot + Math.max(0, interval * cost + spread);
-    if (slot > now) await this.clock.sleep(slot - now);
-    // A 429 seen by another worker while this one waited still applies.
-    for (let t = this.clock.now(); h.pausedUntil > t; t = this.clock.now()) {
-      await this.clock.sleep(h.pausedUntil - t);
+    const previous = h.turn;
+    let done!: () => void;
+    h.turn = new Promise<void>((resolve) => (done = resolve));
+    try {
+      await previous;
+      const t0 = this.clock.now();
+      if (slot > t0) await this.clock.sleep(slot - t0);
+      // A 429 seen by another worker while this one waited still applies.
+      for (let t = this.clock.now(); h.pausedUntil > t; t = this.clock.now()) {
+        await this.clock.sleep(h.pausedUntil - t);
+      }
+    } finally {
+      done();
     }
   }
 

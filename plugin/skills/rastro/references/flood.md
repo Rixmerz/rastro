@@ -31,8 +31,8 @@ rastro flood show <name> S4         # one state: each element, outcome, where it
 ```
 
 Element outcomes: `done` (led to another state), `same` (stayed, maybe
-called something), `error`, `blocked:<reason>`, `external`, `unreachable`,
-`skipped:denylist|skip|robots|duplicate-link|seen|disabled`, `pending`
+called something), `blocked-write` (a form post the guard stopped), `error`, `blocked:<reason>`, `external`, `unreachable`,
+`skipped:denylist|skip|robots|duplicate-link|repeat|seen|disabled`, `pending`
 (left unexplored).
 
 ## Dig in

@@ -18,14 +18,31 @@ export function urlTemplate(url: string): string {
   } catch {
     return url;
   }
-  const path = templatePath(parsed.pathname);
+  const path = screenPath(templatePath(parsed.pathname));
   const route = parsed.hash.startsWith('#/') ? `#${templatePath(parsed.hash.slice(1))}` : '';
   return `${parsed.host}${path}${route}`;
 }
 
+/** A segment that is an id becomes `{id}`; numbers inside a word become
+ * `{n}` (`page-2.html` → `page-{n}.html`, `books_1` → `books_{n}`). */
+function templateSegment(segment: string): string {
+  if (segment === '') return segment;
+  if (ID_SEGMENT.test(segment)) return '{id}';
+  // An API version is structure: /v1 and /v2 are different APIs.
+  if (/^v\d+$/i.test(segment)) return segment;
+  return segment.replace(/\d+/g, '{n}');
+}
+
 export function templatePath(pathname: string): string {
-  const segments = pathname.split('/').map((s) => (s !== '' && ID_SEGMENT.test(s) ? '{id}' : s));
-  return segments.join('/') || '/';
+  return pathname.split('/').map(templateSegment).join('/') || '/';
+}
+
+const INDEX_PAGE = /\/index\.(?:html?|php|aspx?|jsp)$/i;
+
+/** For telling screens apart, `/dir/index.html` is `/dir/`. Endpoints keep
+ * the path the browser actually asked for. */
+export function screenPath(path: string): string {
+  return path.replace(INDEX_PAGE, '/');
 }
 
 /** An endpoint's template: method-free, with the query's names (not values). */
@@ -73,12 +90,11 @@ export function elementKeys(items: ViewItem[]): FloodElement[] {
 }
 
 /**
- * A state's identity: its URL template plus its structure. Controls count by
- * name; links count only by region and order of magnitude, so two product
- * pages with different related-product links are one state, while a page
- * that gained a form or a dialog is another.
+ * A screen's structure: controls count by name; links count only by region
+ * and order of magnitude, so two product pages with different related-product
+ * links are alike, while a page that gained a form or a dialog is not.
  */
-export function stateHash(url: string, elements: FloodElement[]): string {
+export function structureHash(elements: FloodElement[]): string {
   const controls: string[] = [];
   const links = new Map<string, number>();
   for (const el of elements) {
@@ -86,6 +102,11 @@ export function stateHash(url: string, elements: FloodElement[]): string {
     else controls.push(`${el.role}|${normalizeName(el.name)}|${el.region}`);
   }
   const linkSig = [...links.entries()].map(([region, n]) => `${region}:${String(Math.ceil(Math.log2(n + 1)))}`).sort();
-  const input = [urlTemplate(url), ...controls.sort(), ...linkSig].join('\n');
-  return createHash('sha256').update(input).digest('hex').slice(0, 16);
+  return createHash('sha256').update([...controls.sort(), ...linkSig].join('\n')).digest('hex').slice(0, 16);
+}
+
+/** The exact page a worker stands on: URL template plus structure. The
+ * coordinator groups states more loosely (see PathLearner). */
+export function stateHash(url: string, elements: FloodElement[]): string {
+  return createHash('sha256').update(`${urlTemplate(url)}\n${structureHash(elements)}`).digest('hex').slice(0, 16);
 }

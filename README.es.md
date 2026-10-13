@@ -354,8 +354,12 @@ rastro flood resume shop-test --from S4 --depth +2   # inundar una rama más a f
   corres `flood`, así que te logueas una vez.
 - **Estados, no URLs.** Una pantalla es su plantilla de URL más sus controles,
   así que `/orders/1` y `/orders/2` son un solo estado, y un diálogo abierto en
-  el lugar es otro. Treinta links a la misma plantilla se prueban una vez. Un
-  control del header o la navegación se prueba una vez por flood.
+  el lugar es otro. Se pliegan los ids, los números dentro de nombres
+  (`page-{n}.html`) y `index.html`. Los slugs se aprenden de links hermanos:
+  cinco links que difieren solo en un segmento (`/tag/love/`, `/tag/life/`, …)
+  lo vuelven `{slug}`. Treinta links a la misma plantilla se prueban una vez,
+  los 20 botones «Añadir al carro» idénticos de una lista una vez, y un
+  control del header o la navegación una vez por flood.
 - **Educado, nunca sigiloso.** Por defecto, 2 acciones por segundo por host
   entre todos los workers, con jitter y un tope de concurrencia. Un 429 o 503
   baja el ritmo a la mitad y respeta `Retry-After`. Se respeta robots.txt salvo

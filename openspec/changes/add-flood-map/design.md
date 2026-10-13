@@ -8,6 +8,18 @@ hash of the view's structure (regions and interactive items by role and name,
 names with digits normalised). Text that changes between visits (counters,
 timestamps) does not create new states.
 
+Real sites name things in their paths (`/tag/love/`, `/author/Jane-Austen`),
+which no fixed rule tells from structure. Measured on quotes.toscrape.com, a
+first version that only folded numeric and hex ids made 117 states out of 120
+activations. So the coordinator **learns slugs**: a segment becomes `{slug}`
+once five sibling links differ only in it and share at least one literal
+segment (a bare `/login`, `/about`, `/contact` never generalise). A trailing
+slash does not make another family. Numbers inside a segment fold to `{n}`
+(`page-2.html`, `books_1`; `v1` stays, it is an API version), and
+`index.html` is its directory. A state's identity is the learned template
+plus its structure hash. Endpoints recorded before a slug was learned are
+merged into the first one on every save, and references are rewritten.
+
 An **element key** is `role + normalised name + region + ordinal`, not a ref:
 refs are per snapshot and do not survive a reload. Link hrefs come out of the
 snapshot as written and are resolved against the page URL.
@@ -16,7 +28,9 @@ Elements are **claimed** once per flood so the crawl does not repeat itself:
 a control in `header`/`nav`/`footer` once flood-wide, any other control once
 per URL template (a dialog opened in place lists the page behind it again;
 only the dialog's own elements are new), and a link once per target URL
-template (thirty product links are one activation). Claimed-again elements are
+template (thirty product links are one activation). Of identical controls
+in one region (twenty «Add to basket» buttons, ordinal > 0) only the first is
+tried: `skipped:repeat`. Claimed-again elements are
 `skipped:seen` / `skipped:duplicate-link` and listed only where first seen.
 
 The **frontier** is a priority queue of `(state, elementKey)` ordered by the

@@ -21,6 +21,12 @@ Versioned with [SemVer](https://semver.org/).
   `--detach`, `flood status|stop|list`, and the MCP tools
   `rastro_flood_start|status|map|resume|stop` cover running it in the
   background.
+- **States, not URLs.** Screens are a URL template plus their controls.
+  Slugs are learned from sibling links (`/tag/{slug}/`), and numbers inside
+  names (`page-{n}.html`) and `index.html` are folded. A link template, a
+  repeated list control and a header/nav control are each tried once.
+  Against quotes.toscrape.com and books.toscrape.com this takes a flood from
+  117 states and a spent budget to 6 states in under 20 seconds.
 - **Polite, never stealthy.** Per-host rate with jitter and a concurrency
   cap, backoff on 429/503 with `Retry-After`, robots.txt (unless
   `--ignore-robots`). A CAPTCHA or bot wall pauses the host, and two in a row

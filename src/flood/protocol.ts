@@ -24,6 +24,8 @@ export interface StateView {
   url: string;
   title: string;
   hash: string;
+  /** Structure alone, without the URL. */
+  structure: string;
   elements: StateElement[];
 }
 

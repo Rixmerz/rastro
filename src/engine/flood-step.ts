@@ -9,7 +9,7 @@ import type { ActionKind, ActionRecord, AriaNode, RpcResult } from '../core/type
 import { RastroError } from '../core/types.ts';
 import { interactiveItems, findRef } from '../perception/view.ts';
 import { captureBundle } from '../perception/locators.ts';
-import { elementKeys, stateHash, type FloodElement } from '../flood/state.ts';
+import { elementKeys, stateHash, structureHash, type FloodElement } from '../flood/state.ts';
 import { fillerFor } from '../flood/policy.ts';
 import type { SeedState, StateView, StepRequest, StepResult } from '../flood/protocol.ts';
 import type { EngineCore, RunActionInput } from './engine.ts';
@@ -62,7 +62,7 @@ function describeTree(url: string, title: string, tree: AriaNode[]): Described {
     }
   }
   const elements = withRefs.map(({ ref: _ref, ...rest }) => rest);
-  return { url, title, hash: stateHash(url, withRefs), elements, withRefs };
+  return { url, title, hash: stateHash(url, withRefs), structure: structureHash(withRefs), elements, withRefs };
 }
 
 function kindFor(role: string): ActionKind {
