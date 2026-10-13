@@ -52,6 +52,10 @@ import { CookieJar } from '../link/jar.ts';
 import { linkFlow } from './link.ts';
 import { runRoutineInBrowser, type RoutineRunInput } from './routine-run.ts';
 import { formatRoutineResult } from '../routines/result.ts';
+import { floodExport, floodImport, floodStep } from './flood-step.ts';
+
+/** A blocked write's body is kept for `effects` and flood maps up to this size. */
+const MAX_BLOCKED_BODY_BYTES = 64 * 1024;
 
 const OpenParamsSchema = z.object({
   url: z.string().optional(),
@@ -311,6 +315,11 @@ export class EngineCore implements Engine {
    * masking its formatted text already has. `reveal` (only meaningful for
    * request/cookies/storage, which expose it as a param) skips all of it.
    */
+  /** `maskData` for callers outside the class (the flood worker). */
+  masked<T>(value: T): T {
+    return this.maskData(value);
+  }
+
   private maskData<T>(value: T, reveal = false): T {
     if (reveal) return value;
     const walk = (node: unknown): unknown => {
@@ -471,8 +480,16 @@ export class EngineCore implements Engine {
             if (size !== undefined) data.size = size;
             this.store.addEvent({ t: this.now(), type: 'download', actionId: null, bucket: null, tabId, requestId: null, data });
           },
-          onBlockedWrite: (tabId, method, url, host) => {
-            this.store.addEvent({ t: this.now(), type: 'blocked_write', actionId: null, bucket: null, tabId, requestId: null, data: { method, url, host } });
+          onBlockedWrite: (tabId, method, url, host, body, contentType) => {
+            const data: Record<string, unknown> = { method, url, host };
+            // What the click would have sent. Masked before it is stored, not
+            // only on output: it never reached a server, so nothing downstream
+            // (a link, a replay) needs the raw value.
+            if (body !== undefined && Buffer.byteLength(body) <= MAX_BLOCKED_BODY_BYTES) {
+              data.body = this.secrets.mask(maskBody(body, contentType, false));
+              if (contentType !== undefined) data.contentType = contentType;
+            }
+            this.store.addEvent({ t: this.now(), type: 'blocked_write', actionId: null, bucket: null, tabId, requestId: null, data });
           },
           onWriteBody: (method, url, body) => {
             this.recorder.noteWriteBody(method, url, body);
@@ -1362,6 +1379,15 @@ export class EngineCore implements Engine {
   }
   async flowImport(rawParams: Record<string, unknown>): Promise<RpcResult> {
     return this.flows.flowImport(rawParams);
+  }
+  async floodStep(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return floodStep(this, rawParams);
+  }
+  async floodExport(): Promise<RpcResult> {
+    return floodExport(this);
+  }
+  async floodImport(rawParams: Record<string, unknown>): Promise<RpcResult> {
+    return floodImport(this, rawParams);
   }
 }
 

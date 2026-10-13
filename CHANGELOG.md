@@ -5,6 +5,39 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `flood`: map a whole site by script
+
+- **`rastro flood <url>`** explores a site with no model in the loop. In every
+  reachable screen it activates each interactive element once and records
+  what it caused. Parallel workers (`--workers N`) drain one queue
+  shallowest-first, so the site is mapped level by level. Workers start with
+  the cookies and storage of the calling session.
+- **The map.** `map.json` and a token-budgeted `map.md` hold the states, where
+  each element led, and an endpoint index by method and path template. Each
+  endpoint lists its statuses, body field names and the elements that call
+  it. `flood show <name> [S#|E#]` expands one state or endpoint, with the
+  worker session and request id for `effects` / `request --curl`.
+  `flood resume --from S# --depth +n` floods one branch deeper.
+  `--detach`, `flood status|stop|list`, and the MCP tools
+  `rastro_flood_start|status|map|resume|stop` cover running it in the
+  background.
+- **States, not URLs.** Screens are a URL template plus their controls.
+  Slugs are learned from sibling links (`/tag/{slug}/`), and numbers inside
+  names (`page-{n}.html`) and `index.html` are folded. A link template, a
+  repeated list control and a header/nav control are each tried once.
+  Against quotes.toscrape.com and books.toscrape.com this takes a flood from
+  117 states and a spent budget to 6 states in under 20 seconds.
+- **Polite, never stealthy.** Per-host rate with jitter and a concurrency
+  cap, backoff on 429/503 with `Retry-After`, robots.txt (unless
+  `--ignore-robots`). A CAPTCHA or bot wall pauses the host, and two in a row
+  stop it. Writes stay blocked, logout/delete/pay-like elements are never
+  clicked (`--skip`, `--include`), and password fields are never filled.
+
+### Changed
+
+- A blocked write now keeps its body, masked, and `effects` shows it, so a
+  click that tried to post says what it would have sent.
+
 ## [0.4.0] — 2026-10-11
 
 ### Added — standalone clients, and list reads that follow their pages

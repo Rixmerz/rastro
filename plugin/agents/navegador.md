@@ -22,6 +22,8 @@ You receive a goal from the caller and an optional session context. Your job is 
 
 0. **Check for a routine first.** `rastro routine list` shows saved routines. If one does what the goal needs, run it with `rastro routine run <name> --param k=v` and report its result line; browse only for what no routine covers. If its result says `a write was sent: do NOT retry`, do not run it again: check the site instead.
 
+0b. **Mapping a whole site is a flood, not a walk.** If the goal is to learn what a site has (its screens, buttons, the API behind them), run `rastro -s <session> flood <url> --detach`, wait on `rastro flood status <name>`, read `rastro flood show <name>`, and answer from the map. Drill into `show <name> E#` only for the endpoints the goal needs.
+
 1. **Start with `rastro view`** to see what is on the page. If the session is new, `rastro open [url]` first with appropriate `--allow-write` flags.
 
 2. **Act on the goal in steps.** Each action returns a one-line summary. Read the counter: if it says `req`, drill down with `rastro effects <id>` to see which requests happened; if blocked, stop and report.

@@ -58,6 +58,7 @@ const SOURCE_PREFIX: Record<ActionRecord['source'], string> = {
   agent: '',
   human: '[human] ',
   flow: '[flow] ',
+  flood: '[flood] ',
 };
 
 function historyTarget(action: ActionRecord): string | undefined {
@@ -218,8 +219,9 @@ function blockedLines(events: TraceEvent[]): string[] {
   return events
     .filter((e) => e.type === 'blocked_write')
     .map((e) => {
-      const d = e.data as { method: string; url: string };
-      return tagLine('blk', `${d.method} ${shortUrl(d.url)}`);
+      const d = e.data as { method: string; url: string; body?: string };
+      const body = d.body === undefined ? '' : ` · body ${sanitize(d.body, 160)}`;
+      return tagLine('blk', `${d.method} ${shortUrl(d.url)}${body}`);
     });
 }
 

@@ -107,7 +107,7 @@ export interface LocatorBundle {
   frame?: string;
 }
 
-export type ActionSource = 'agent' | 'human' | 'flow';
+export type ActionSource = 'agent' | 'human' | 'flow' | 'flood';
 
 export type ActionKind =
   | 'open'
@@ -306,6 +306,9 @@ export type RpcMethod =
   | 'read'
   | 'flowExport'
   | 'flowImport'
+  | 'floodStep'
+  | 'floodExport'
+  | 'floodImport'
   | 'status'
   | 'close';
 

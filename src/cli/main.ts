@@ -29,6 +29,7 @@ import {
 } from './args.ts';
 import type { Dispatch } from './args.ts';
 import { VERSION } from '../version.ts';
+import { runFloodCommand } from './flood.ts';
 
 const MAX_INLINE_BYTES = 4096;
 
@@ -694,9 +695,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  if ((command === 'record' || command === 'flow' || command === 'routine') && (args[0] === undefined || args.includes('-h') || args.includes('--help'))) {
+  if ((command === 'record' || command === 'flow' || command === 'routine' || command === 'flood') && (args[0] === undefined || args.includes('-h') || args.includes('--help'))) {
     const key = args[0] === undefined ? command : `${command} ${args[0]}`;
-    console.log(`usage: ${USAGE[key] ?? TOP_LEVEL_HELP}`);
+    console.log(`usage: ${USAGE[key] ?? (command === 'flood' ? USAGE.flood : undefined) ?? TOP_LEVEL_HELP}`);
     return;
   }
 
@@ -714,6 +715,15 @@ async function main(): Promise<void> {
   if (command === 'secret') {
     try {
       runSecret(args, json);
+    } catch (err) {
+      process.exitCode = printError(err, json);
+    }
+    return;
+  }
+
+  if (command === 'flood') {
+    try {
+      await runFloodCommand(session, args, json, argv);
     } catch (err) {
       process.exitCode = printError(err, json);
     }

@@ -10,6 +10,8 @@ import { stringifyRecipe } from '../src/link/recipe.ts';
 import { createServer } from 'node:http';
 import { RastroError } from '../src/core/types.ts';
 import type { RpcMethod, RpcResult } from '../src/core/types.ts';
+import { addEndpoint, newMap } from '../src/flood/map.ts';
+import { floodDir } from '../src/core/paths.ts';
 
 type Call = { session: string; method: RpcMethod; params: Record<string, unknown> };
 
@@ -38,10 +40,10 @@ afterEach(() => {
 });
 
 describe('tool listing', () => {
-  test('lists the 12 browser tools and the 2 routine tools with short descriptions', async () => {
+  test('lists the 17 browser tools and the 2 routine tools with short descriptions', async () => {
     const { client } = await connect(() => Promise.resolve({ text: 'ok', data: null }));
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(19);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
@@ -57,6 +59,11 @@ describe('tool listing', () => {
         'rastro_detail',
         'rastro_export',
         'rastro_profiles',
+        'rastro_flood_start',
+        'rastro_flood_resume',
+        'rastro_flood_status',
+        'rastro_flood_map',
+        'rastro_flood_stop',
         'rastro_routines',
         'rastro_routine_run',
       ].sort(),
@@ -358,6 +365,28 @@ steps:
     expect(names).not.toContain('add-note');
 
     const off = await connectWith(() => Promise.resolve({ text: 'ok', data: null }), { routines: 'off' });
-    expect((await off.client.listTools()).tools).toHaveLength(12);
+    expect((await off.client.listTools()).tools).toHaveLength(17);
+  });
+});
+
+describe('flood tools', () => {
+  test('rastro_flood_map reads the overview and one endpoint; status says it is finished', async () => {
+    const map = newMap('shop', 'https://shop.test/', 'default', { depth: 1, budget: 1, timeMs: 1, workers: 1, rate: 1, concurrency: 1, ignoreRobots: false, skip: [], include: [], fill: true }, ['flood-shop-w1']);
+    map.status = 'done';
+    addEndpoint(
+      map,
+      { id: 'r31', action: 12, phase: 'activate', method: 'GET', url: 'https://shop.test/api/orders/7', resourceType: 'fetch', status: 200 },
+      'flood-shop-w1',
+      { state: 'S1', key: 'button|ver pedido|main|0', name: 'Ver pedido' },
+    );
+    mkdirSync(floodDir('shop'), { recursive: true });
+    writeFileSync(join(floodDir('shop'), 'map.json'), JSON.stringify(map));
+    const { client } = await connect(() => Promise.resolve({ text: 'ok', data: null }));
+    const text = async (name: string, args: Record<string, unknown>) =>
+      ((await client.callTool({ name, arguments: args })).content as { type: string; text: string }[])[0]!.text;
+    expect(await text('rastro_flood_map', { name: 'shop' })).toContain('E1 GET shop.test/api/orders/{id} 200');
+    expect(await text('rastro_flood_map', { name: 'shop', id: 'E1' })).toContain('rastro -s flood-shop-w1 request r31 --curl');
+    expect(await text('rastro_flood_status', { name: 'shop' })).toMatch(/^shop: done/);
+    expect(await text('rastro_flood_map', { name: 'nope' })).toMatch(/^error: no flood map/);
   });
 });

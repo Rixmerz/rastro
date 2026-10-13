@@ -17,6 +17,9 @@ import type { FlowParam, ToolManifest } from '../flow/format.ts';
 import { describeLink, loadRoutines, type Routine, type RoutineCatalog } from '../routines/registry.ts';
 import { dispatchRoutine, type EngineChoice } from '../routines/dispatch.ts';
 import { isCallerParam, isRequired, validateRoutineParams } from '../routines/params.ts';
+import { defaultFloodName, detachFlood, floodStatus, listFloods, showFlood, stopFlood } from '../flood/commands.ts';
+import { readMap } from '../flood/coordinator.ts';
+import { floodDir } from '../core/paths.ts';
 
 type CallFn = (
   session: string,
@@ -130,7 +133,8 @@ export function serverInstructions(exposure: RoutineExposure, routinesOnly: bool
   const browser =
     'For anything no routine covers: rastro_open (with allowWrite for hosts that must receive writes), rastro_view to act, rastro_read for the text a page says (view lists only what can be acted on), rastro_act; ' +
     'each action returns a one-line effect summary, and rastro_effects / rastro_trace / rastro_request dig into what it caused. ' +
-    "To use the user's own browser profile (their logins), rastro_open with a profile from rastro_profiles; that browser must be closed first, so ask the user to close it and never close it yourself.";
+    "To use the user's own browser profile (their logins), rastro_open with a profile from rastro_profiles; that browser must be closed first, so ask the user to close it and never close it yourself. " +
+    'To learn a whole site (every screen, button and the API calls behind them) rather than one task, rastro_flood_start maps it by script; then read rastro_flood_map and dig in where it matters.';
   if (exposure === 'off') return browser;
   if (routinesOnly) return `${routines} This server exposes routines only.`;
   return `${routines} ${browser}`;
@@ -288,6 +292,8 @@ export function createMcpServer(
     (a) => ({ method: 'detail', params: { ref: a.ref } }),
   );
 
+  registerFloodTools(server, defaultSession);
+
   register(
     'rastro_export',
     'Exports the session trace as a HAR, Perfetto, or Playwright trace file.',
@@ -296,6 +302,154 @@ export function createMcpServer(
   );
 
   return server;
+}
+
+// ---------------------------------------------------------------------------
+// Flood tools: a scripted crawl runs detached; the agent reads its map.
+// ---------------------------------------------------------------------------
+
+function textResult(text: string): CallToolResult {
+  return { content: [{ type: 'text', text }] };
+}
+
+function floodArgs(a: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const num = (flag: string, v: unknown): void => {
+    if (typeof v === 'number') out.push(flag, String(v));
+  };
+  num('--workers', a.workers);
+  num('--budget', a.budget);
+  num('--rate', a.rate);
+  if (typeof a.time === 'string') out.push('--time', a.time);
+  if (Array.isArray(a.skip) && a.skip.length > 0) out.push('--skip', a.skip.join(','));
+  if (Array.isArray(a.include) && a.include.length > 0) out.push('--include', a.include.join(','));
+  return out;
+}
+
+function registerFloodTools(server: McpServer, defaultSession: string): void {
+  const limits = {
+    workers: z.number().int().min(1).max(16).optional().describe('parallel browsers (default 2)'),
+    budget: z.number().int().positive().optional().describe('elements to try at most (default 300)'),
+    time: z.string().optional().describe('wall-time limit: 90s, 10m, 1h (default 10m)'),
+    rate: z.number().positive().optional().describe('actions per second per host, all workers together (default 2)'),
+    skip: z.array(z.string()).optional().describe('element names never to activate, besides the built-in logout/delete/pay denylist'),
+    include: z.array(z.string()).optional().describe('denylisted names to activate anyway'),
+  };
+
+  server.registerTool(
+    'rastro_flood_start',
+    {
+      description:
+        'Maps a whole site by script, in the background: every element of every screen and the calls it makes. Writes stay blocked. Then read rastro_flood_map.',
+      inputSchema: {
+        url: z.string(),
+        name: z.string().optional().describe('flood name (default: from the host)'),
+        session: z
+          .string()
+          .optional()
+          .describe(
+            'session whose cookies the workers start with (log in there first). Logout/delete/pay are never clicked, robots.txt and rate limits hold, a CAPTCHA stops the host.',
+          ),
+        depth: z.number().int().min(0).optional().describe('levels below the start page (default 3)'),
+        ...limits,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => {
+      const a = args as Record<string, unknown>;
+      try {
+        const url = String(a.url);
+        const name = typeof a.name === 'string' ? a.name : defaultFloodName(url);
+        const session = resolveSession(a as { session?: string }, defaultSession);
+        const argv = ['-s', session, 'flood', url, '--name', name, ...floodArgs(a)];
+        if (typeof a.depth === 'number') argv.push('--depth', String(a.depth));
+        const { pid } = detachFlood(name, argv);
+        return textResult(`flood ${name} started (pid ${String(pid)}). Check rastro_flood_status, then read rastro_flood_map name=${name}.`);
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'rastro_flood_resume',
+    {
+      description: 'Floods deeper from an existing map: all that was left unexplored, or only below one state (from "S12"). depth "+2" goes two levels further.',
+      inputSchema: { name: z.string(), from: z.string().optional(), depth: z.string().optional(), ...limits },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => {
+      const a = args as Record<string, unknown>;
+      try {
+        const name = String(a.name);
+        const previous = readMap(floodDir(name));
+        const argv = ['-s', previous.seed.session, 'flood', 'resume', name, ...floodArgs(a)];
+        if (typeof a.from === 'string') argv.push('--from', a.from);
+        if (typeof a.depth === 'string') argv.push('--depth', a.depth);
+        const { pid } = detachFlood(name, argv);
+        return textResult(`flood ${name} resumed (pid ${String(pid)}).`);
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'rastro_flood_status',
+    {
+      description: 'Progress of a flood (or of all of them): running or finished, states, actions, endpoints, what is left.',
+      inputSchema: { name: z.string().optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) => {
+      const a = args as { name?: string };
+      try {
+        if (a.name !== undefined) return textResult(floodStatus(a.name).text);
+        const all = listFloods();
+        return textResult(all.length === 0 ? 'no floods yet' : all.map((f) => floodStatus(f.name).text).join('\n'));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'rastro_flood_map',
+    {
+      description:
+        'Reads a flood map: the overview within a token budget, or one state (S3) or endpoint (E7) with the worker session and request id to drill into.',
+      inputSchema: {
+        name: z.string(),
+        id: z.string().optional().describe('S# or E#; pass the sample worker as `session` to rastro_request / rastro_effects'),
+        budget: z.number().int().positive().optional().describe('tokens for the overview (default 4000)'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) => {
+      const a = args as { name: string; id?: string; budget?: number };
+      try {
+        return textResult(showFlood(a.name, a.id, a.budget).text);
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'rastro_flood_stop',
+    {
+      description: 'Stops a running flood after the actions in flight; what was left stays unexplored, for rastro_flood_resume.',
+      inputSchema: { name: z.string() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) => {
+      try {
+        return textResult(stopFlood((args as { name: string }).name));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
