@@ -5,6 +5,8 @@ Versioned with [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-13
+
 ### Added — `flood`: map a whole site by script
 
 - **`rastro flood <url>`** explores a site with no model in the loop. In every
@@ -515,6 +517,7 @@ recording.
   high) fixed in full, each with a regression test. The 5 high ones were secret
   leaks through `--json`, snapshots, HAR and `pw-trace`.
 
+[0.5.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Rixmerz/rastro/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Rixmerz/rastro/releases/tag/v0.2.1

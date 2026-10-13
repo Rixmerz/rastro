@@ -1,7 +1,7 @@
 {
   "name": "rastro",
-  "version": "0.4.0",
-  "description": "Browser CLI for AI agents: minimal view, effect summaries, causal event trace, investigation on demand, and saved routines exposed as typed tools, replayable over HTTP without a browser.",
+  "version": "0.5.0",
+  "description": "Browser CLI for AI agents: minimal view, effect summaries, causal event trace, investigation on demand, and saved routines exposed as typed tools, replayable over HTTP without a browser, and scripted whole-site maps (flood).",
   "author": {
     "name": "Juan Pablo Diaz",
     "email": "juanpablo516@gmail.com"
@@ -14,6 +14,7 @@
     "ai-agents",
     "playwright",
     "cdp",
-    "trace"
+    "trace",
+    "crawler"
   ]
 }
