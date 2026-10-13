@@ -41,6 +41,9 @@ export async function createEngine(_session: string): Promise<Engine & { shutdow
     'read',
     'flowExport',
     'flowImport',
+    'floodStep',
+    'floodExport',
+    'floodImport',
     'status',
     'close',
   ] as const satisfies readonly RpcMethod[]) {

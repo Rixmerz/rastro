@@ -32,7 +32,7 @@ item requeued once.
 Flood SHALL pace actions per registrable host with a shared rate (default 2
 per second) with jitter and a per-host concurrency cap, SHALL back off on 429
 and 503 honouring `Retry-After`, and SHALL respect robots.txt unless
-`--ignore-robots`. When `detectBlocked` reports a CAPTCHA, bot-block or 2FA,
+`--ignore-robots`, refusing to start when it disallows the start URL. When `detectBlocked` reports a CAPTCHA, bot-block or 2FA,
 flood SHALL pause that host and record the state as blocked; after two
 consecutive blocks it SHALL stop flooding that host. Flood SHALL NOT alter the
 browser fingerprint, rotate identities or attempt to solve challenges.
@@ -59,6 +59,26 @@ unless named in `--include`. Password fields SHALL never be filled.
 #### Scenario: Logout skipped
 - **WHEN** a state contains a link named «Cerrar sesión»
 - **THEN** it appears in the map as skipped and is never clicked
+
+### Requirement: The flood does not repeat itself
+A control in a header, navigation or footer region SHALL be activated at most
+once per flood; any other control at most once per state URL template; a link
+at most once per target URL template. Elements skipped this way SHALL be
+recorded with why.
+
+#### Scenario: A list of thirty products
+- **WHEN** a page lists thirty links to `/products/{id}`
+- **THEN** one of them is followed and the other twenty-nine are recorded as `skipped:duplicate-link`
+
+### Requirement: Running in the background
+`--detach` SHALL start the flood in a detached process and return. `flood
+status` SHALL say whether it is still running, `flood stop` SHALL end it after
+the steps in flight keeping the remaining items as unexplored, and the MCP
+tool that starts a flood SHALL always detach.
+
+#### Scenario: Stopped by the user
+- **WHEN** `rastro flood stop shop` runs while the flood is working
+- **THEN** the flood ends with status `stopped` and what was left is listed under `unexplored`, ready for `flood resume`
 
 ### Requirement: A map an agent can read and drill into
 Flood SHALL write `map.json` and a token-budgeted `map.md` with states, edges,

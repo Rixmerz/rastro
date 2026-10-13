@@ -22,6 +22,7 @@ Rastro da al agente el mínimo que un humano percibe (qué se puede interactuar 
 | Seguro sin humano delante | **write guard + mascarado** | no | no | no | no |
 | Grabación humana → script | **sí** (YAML + export PW) | codegen aparte | Chrome Recorder | no | no |
 | Corrida → cliente de API autónomo | **sí**, determinista (`flow emit`, TS / Python) | no | no | no | no |
+| Mapa del sitio entero por script | **sí** (`flood`: cada pantalla, elemento y llamada; escrituras bloqueadas) | no | no | no | no |
 | Navegador | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
 
 Los dos diferenciadores reales son la **atribución causal** (ninguna otra
@@ -322,6 +323,63 @@ partir de un HAR.
 - **Una receta vieja se rechaza**; una sin verificar se emite con un aviso.
 - Un cliente que escribe lo dice arriba y, si falla, informa las escrituras ya
   enviadas (`ReplayError.writes`) para no reintentarlas a ciegas.
+
+## Mapear un sitio entero: `flood`
+
+Un agente aprende un sitio de a un `view` → `click` → `effects`, y la mayoría
+de esos pasos no llevan a nada. `rastro flood` hace esa parte por script, sin
+modelo en el ciclo. Activa cada elemento de cada pantalla y registra qué llama
+cada uno, y le entrega al agente un mapa que lee de una vez.
+
+La imagen es el agua llenando un laberinto. Cada camino abierto sube un nivel
+a la vez, todos juntos, hasta que se acaba la profundidad, el presupuesto o el
+tiempo.
+
+```bash
+rastro -s tienda open https://shop.test/login --allow-write shop.test   # login una vez, a mano o con una rutina
+rastro -s tienda flood https://shop.test/ --workers 4 --depth 3
+# shop-test: done · 4 levels · 37 states · 412 actions · 52 endpoints (6 writes, 6 blocked) · 0 unexplored · 3m12s
+# map: ~/.local/share/rastro/floods/shop-test/map.md
+
+rastro flood show shop-test           # el mapa, ~4k tokens: escrituras, lecturas, estados, bloqueos
+rastro flood show shop-test E7        # un endpoint: quién lo llama, muestras, cómo profundizar
+rastro flood show shop-test S4        # un estado: cada elemento, qué hizo y adónde llevó
+rastro flood resume shop-test --from S4 --depth +2   # inundar una rama más a fondo
+```
+
+- **Cañerías.** `--workers N` corre N sesiones en paralelo,
+  `flood-<nombre>-w1…wN`, vaciando una sola cola, lo menos profundo primero.
+  Cada worker es una sesión propia porque la atribución es de a una acción por
+  página. Todos parten con las cookies y el storage de la sesión desde la que
+  corres `flood`, así que te logueas una vez.
+- **Estados, no URLs.** Una pantalla es su plantilla de URL más sus controles,
+  así que `/orders/1` y `/orders/2` son un solo estado, y un diálogo abierto en
+  el lugar es otro. Treinta links a la misma plantilla se prueban una vez. Un
+  control del header o la navegación se prueba una vez por flood.
+- **Educado, nunca sigiloso.** Por defecto, 2 acciones por segundo por host
+  entre todos los workers, con jitter y un tope de concurrencia. Un 429 o 503
+  baja el ritmo a la mitad y respeta `Retry-After`. Se respeta robots.txt salvo
+  con `--ignore-robots`. Un CAPTCHA, 2FA o muro antibot pausa el host, y dos
+  seguidos lo detienen. Flood detecta y retrocede. No cambia la huella del
+  navegador, no rota identidades ni resuelve desafíos.
+- **Las escrituras se encuentran, no se envían.** El guard de escritura queda
+  como está por defecto: nada permitido. Una escritura bloqueada se registra
+  con método, URL y cuerpo (enmascarado), así el mapa muestra qué enviaría un
+  formulario, con sus nombres de campo. Logout, eliminar, pagar, darse de baja
+  y similares se listan pero nunca se presionan. `--skip` agrega nombres y
+  `--include` deja pasar uno. Los formularios reciben valores neutros antes de
+  enviarse. Los campos de contraseña nunca se llenan.
+- **Se puede profundizar.** Cada activación es una acción normal (`[flood]` en
+  `history`) en la traza de su worker, así que `effects`, `request --curl` y
+  `snapshot` funcionan sobre ella, también después del flood.
+- **En segundo plano.** `--detach` vuelve de inmediato. Se sigue con
+  `flood status`, `flood stop` (lo que quedó pasa a unexplored) y `flood list`.
+  Por MCP: `rastro_flood_start`, `rastro_flood_status`, `rastro_flood_map`,
+  `rastro_flood_resume`, `rastro_flood_stop`.
+
+Límites: `--depth 3`, `--budget 300` (elementos probados), `--time 10m`,
+`--rate 2`, `--concurrency 2`. Los mapas viven en
+`~/.local/share/rastro/floods/<nombre>/` (`map.json`, `map.md`).
 
 ## Salida para máquinas
 

@@ -31,6 +31,7 @@ as a causal trace it can dig into when it matters.
 | Safe with nobody watching | **write guard + masking** | no | no | no | no |
 | Human recording → script | **yes** (YAML + Playwright export) | separate codegen | Chrome Recorder | no | no |
 | Run → standalone API client | **yes**, deterministic (`flow emit`, TS / Python) | no | no | no | no |
+| Scripted whole-site map | **yes** (`flood`: every screen, element and call; writes blocked) | no | no | no | no |
 | Browser | Chromium (`playwright-core`) | multi | Chrome | multi | Chromium |
 
 The two real differentiators are **causal attribution** — no other tool tells
@@ -389,6 +390,67 @@ guess a client from a HAR.
 - A client that writes says so at the top, and on failure reports the writes
   already sent (`ReplayError.writes`), so a caller does not retry them blindly.
 - Emit again after linking again; do not edit the file by hand.
+
+## Mapping a whole site: `flood`
+
+An agent learns a site one `view` → `click` → `effects` at a time, and most
+of those steps are dead ends. `rastro flood` does that part by script, with no
+model in the loop. It activates every element of every screen and records what
+each one calls, then hands the agent a map to read in one go.
+
+The picture is water filling a maze. Every open path rises one level at a
+time, all of them together, until the depth, the budget or the clock runs out.
+
+```bash
+rastro -s shop open https://shop.test/login --allow-write shop.test   # log in once, by hand or by routine
+rastro -s shop flood https://shop.test/ --workers 4 --depth 3
+# level 1 · 12 states · 40/300 activations · 18 endpoints · queue 61
+# shop-test: done · 4 levels · 37 states · 412 actions · 52 endpoints (6 writes, 6 blocked) · 0 unexplored · 3m12s
+# map: ~/.local/share/rastro/floods/shop-test/map.md
+
+rastro flood show shop-test           # the map, about 4k tokens: writes, reads, states, blocks
+rastro flood show shop-test E7        # one endpoint: who calls it, samples, how to dig in
+# E7 GET shop.test/api/orders/{id} 200 json ×12 ← S4 «Ver pedido» +3
+#   flood-shop-test-w2#88 r311 https://shop.test/api/orders/1042
+#     rastro -s flood-shop-test-w2 request r311 --curl · rastro -s flood-shop-test-w2 effects 88
+rastro flood show shop-test S4        # one state: each element, what it did, where it led
+rastro flood resume shop-test --from S4 --depth +2   # flood one branch deeper
+```
+
+- **Pipes.** `--workers N` runs N sessions in parallel, `flood-<name>-w1…wN`,
+  draining one shared queue shallowest-first. Each worker is a session of its
+  own because attribution is one action at a time per page. All of them start
+  with the cookies and storage of the session you run `flood` from, so you log
+  in once.
+- **States, not URLs.** A screen is its URL template plus its controls, so
+  `/orders/1` and `/orders/2` are one state, and a dialog opened in place is
+  another. A worker reaches a state by its URL, then the clicks that led
+  there. Thirty links to the same template are tried once. A header or nav
+  control is tried once per flood.
+- **Polite, never stealthy.** The default rate is 2 actions per second per
+  host, across all workers, with jitter and a concurrency cap. A 429 or 503
+  halves the rate and honours `Retry-After`. robots.txt is respected unless
+  `--ignore-robots`. A CAPTCHA, 2FA or bot wall pauses the host, and two in a
+  row stop it. Flood detects and backs off. It does not change the
+  fingerprint, rotate identities or solve challenges.
+- **Writes are found, not sent.** The write guard keeps its default: nothing is
+  allowed. A blocked write is recorded with its method, URL and body (masked),
+  so the map shows what a form would send, with its field names. Buttons named
+  like logout, delete, pay, unsubscribe and the like are listed but never
+  clicked, in English and Spanish. `--skip` adds names to that list and
+  `--include` lets one through. Forms get neutral filler before a submit
+  (`flood@example.test`, `1`). Password fields are never filled.
+- **Drillable.** Every activation is a normal action (`[flood]` in `history`)
+  in its worker's trace, so `effects`, `request --curl` and `snapshot` work on
+  it, after the flood too.
+- **Background.** `--detach` returns at once. `flood status`, `flood stop`
+  (the map keeps what was left as unexplored) and `flood list` follow it. Over
+  MCP: `rastro_flood_start`, `rastro_flood_status`, `rastro_flood_map`,
+  `rastro_flood_resume`, `rastro_flood_stop`.
+
+Limits: `--depth 3`, `--budget 300` (elements tried), `--time 10m`,
+`--rate 2`, `--concurrency 2`. Maps live in `~/.local/share/rastro/floods/<name>/`
+(`map.json`, `map.md`).
 
 ## Machine-readable output
 

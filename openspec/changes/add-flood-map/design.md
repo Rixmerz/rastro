@@ -9,7 +9,15 @@ names with digits normalised). Text that changes between visits (counters,
 timestamps) does not create new states.
 
 An **element key** is `role + normalised name + region + ordinal`, not a ref:
-refs are per snapshot and do not survive a reload.
+refs are per snapshot and do not survive a reload. Link hrefs come out of the
+snapshot as written and are resolved against the page URL.
+
+Elements are **claimed** once per flood so the crawl does not repeat itself:
+a control in `header`/`nav`/`footer` once flood-wide, any other control once
+per URL template (a dialog opened in place lists the page behind it again;
+only the dialog's own elements are new), and a link once per target URL
+template (thirty product links are one activation). Claimed-again elements are
+`skipped:seen` / `skipped:duplicate-link` and listed only where first seen.
 
 The **frontier** is a priority queue of `(state, elementKey)` ordered by the
 state's depth, then by discovery order. Every worker pops the shallowest item,
@@ -58,8 +66,11 @@ requeued once.
 
 ## Rate and backoff
 
-A token bucket per registrable host shared by all workers (`--rate`, default
-2/s), with ±30% jitter, and a per-host concurrency cap (default 2). On 429 or
+A per-host schedule shared by all workers (`--rate`, default 2/s), with ±30%
+jitter, and a per-host concurrency cap (default 2). Time slots are reserved in
+arrival order, so an item taken earlier is never overtaken by one taken later
+while both wait on the same host: without that, a deeper level could start
+before a shallower item that was already taken. On 429 or
 503 the host's rate halves and honours `Retry-After`; it recovers slowly after
 a quiet minute. `detectBlocked` runs after every action as today; a `captcha`
 or `bot-block` result pauses the host, records the state as `blocked:<reason>`
@@ -76,8 +87,13 @@ normal sessions too (`effects` can show what a blocked click tried to send).
 
 ## The map
 
-`map.json`: `{ seed, startedAt, finishedAt, limits, states[], edges[],
-endpoints[], blocked[], unexplored[], external[] }`. Endpoints are grouped by
+Maps live under `~/.local/share/rastro/floods/<name>/` (`map.json`, `map.md`,
+plus `pid`, `stop` and `flood.log` while a detached flood runs): they are
+generated output, like traces, not hand-authored like flows.
+
+`map.json`: `{ seed, workers, startedAt, updatedAt, finishedAt, status,
+stopReason, limits, stats, states[], endpoints[], hosts[], external[],
+unexplored[] }`. Edges are each element's `to`. Endpoints are grouped by
 `method + host + path template`; each keeps statuses seen, content types, a
 sample request id per worker, the triggering `(state, elementKey)` pairs, and
 whether any instance was a blocked write.
@@ -87,6 +103,17 @@ default ~4k tokens): the state tree indented by level, then the endpoint index
 sorted writes-first, then blocked/unreachable. Every line carries a short id
 (`S12`, `E7`) that `rastro flood show` expands. Page-originated strings are in
 «» as everywhere else.
+
+## Running it
+
+The coordinator runs in the CLI process that started it and talks to the
+worker daemons over their sockets (`floodStep`, `floodExport` on the seed
+session, `floodImport` on each worker). `--detach` re-executes the same
+command in a detached child that logs to `flood.log`; MCP's
+`rastro_flood_start` always detaches. `flood stop` drops a `stop` file the
+loop checks between steps. Workers are opened with an explicit empty write
+allowlist and dialogs dismissed, and closed at the end; their traces stay on
+disk for drilling in.
 
 ## Why not reuse `flow` / recording
 

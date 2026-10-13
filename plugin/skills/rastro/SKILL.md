@@ -1,6 +1,6 @@
 ---
 name: rastro
-description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath. Also runs saved routines (a recorded site task exposed as a tool with typed params, some replayed over plain HTTP without a browser): check `rastro routine list` before browsing a site the user works with, and use this skill to make, run or link one. Can also borrow a browser profile the user already has (their logins) with `rastro profiles` / `open --profile`, once the user has closed that browser.
+description: CLI for browsing with minimal page views, effect summaries per action, and queryable event traces. Ideal when logging in, filling forms, checking page behavior, or debugging network requests—keeps context lean while recording everything underneath. Also runs saved routines (a recorded site task exposed as a tool with typed params, some replayed over plain HTTP without a browser): check `rastro routine list` before browsing a site the user works with, and use this skill to make, run or link one. Can map a whole site by script (`rastro flood`) and hand back a map of its screens and API calls. Can also borrow a browser profile the user already has (their logins) with `rastro profiles` / `open --profile`, once the user has closed that browser.
 allowed-tools: Bash(rastro:*)
 ---
 
@@ -64,6 +64,10 @@ Writes stay blocked unless allowed, and on the user's profile they go out as the
 
 Before browsing a known site, check `rastro_routines` (or `rastro routine list`). If a routine covers the task, run it with its params instead of navigating: one call, a result that says what was written and whether a retry is safe. See `routines.md`.
 
+## Mapping a whole site
+
+To learn a site rather than do one task on it (every screen, button and the API calls behind them), run `rastro flood <url>` (`--detach` for the background) and read `rastro flood show <name>`, then dig into one endpoint or state. It runs by script, not by you: writes stay blocked, logout/delete/pay are never clicked, and a CAPTCHA stops it. See `flood.md`.
+
 ## Delegating browsing
 
 For multi-step goals that take more than 3–4 interactions (login flows, multi-page forms, investigating site behavior), use the `navegador` agent instead of orchestrating rastro commands yourself. Give it a goal and optional constraints (session name, URL, write allowlist), and it keeps the page context out of the main thread. It returns the outcome, evidence ids (like `#4`, `r31`), and the session name so you can investigate further if needed.
@@ -76,5 +80,6 @@ For multi-step goals that take more than 3–4 interactions (login flows, multi-
 - `autonomy.md` — dialogs, popups, downloads, timeouts, crash recovery, blocked states, write guard, secrets.
 - `flows.md` — record mode, flow YAML with login examples, flow run/resume, Playwright export, Chrome import.
 - `routines.md` — running routines, reading their results, making one, linking it to HTTP.
+- `flood.md` — mapping a whole site by script, reading the map, drilling into its endpoints.
 
 See the CLI surface with `rastro -h`. Add `--json` for machine-readable output: one line, `{schemaVersion, ok, data}` or `{schemaVersion, ok: false, error}`.

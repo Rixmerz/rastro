@@ -314,6 +314,101 @@ function rtFormPage(csrf: string): string {
   );
 }
 
+
+// --- flood: a small site to map ------------------------------------------
+
+function floodNav(): string {
+  return `<header><nav>
+<a href="/flood/">Inicio</a>
+<a href="/flood/products">Productos</a>
+<a href="/flood/contact">Contacto</a>
+<a href="/flood/private">Privado</a>
+<a href="/flood/logout">Cerrar sesión</a>
+<a href="https://example.org/docs">Docs</a>
+</nav></header>`;
+}
+
+function floodHomePage(): string {
+  return page(
+    'Tienda',
+    `${floodNav()}
+<main>
+<h1>Tienda</h1>
+<button id="offers">Ver ofertas</button>
+<div id="panel"></div>
+</main>
+<script>
+fetch('/flood/api/me');
+document.getElementById('offers').addEventListener('click', async () => {
+  const r = await fetch('/flood/api/offers');
+  const data = await r.json();
+  const panel = document.getElementById('panel');
+  panel.innerHTML = '<div role="dialog" aria-label="Ofertas"><p>' + data.offers.length + ' ofertas</p><button id="claim">Reclamar oferta</button></div>';
+  document.getElementById('claim').addEventListener('click', () => fetch('/flood/api/offers/claim?id=7'));
+});
+</script>`,
+  );
+}
+
+function floodProductsPage(): string {
+  const links = Array.from({ length: 30 }, (_, i) => `<li><a href="/flood/products/${i + 1}">Producto ${i + 1}</a></li>`).join('\n');
+  return page(
+    'Productos',
+    `${floodNav()}
+<main>
+<h1>Productos</h1>
+<label for="sort">Ordenar</label>
+<select id="sort"><option value="name">Nombre</option><option value="price">Precio</option></select>
+<ul>${links}</ul>
+</main>
+<script>
+document.getElementById('sort').addEventListener('change', (e) => fetch('/flood/api/products?sort=' + e.target.value));
+</script>`,
+  );
+}
+
+function floodProductPage(id: string): string {
+  return page(
+    `Producto ${id}`,
+    `${floodNav()}
+<main>
+<h1>Producto ${id}</h1>
+<button id="order">Ver pedido</button>
+</main>
+<script>
+document.getElementById('order').addEventListener('click', () => fetch('/flood/api/orders/${id}'));
+</script>`,
+  );
+}
+
+function floodContactPage(): string {
+  return page(
+    'Contacto',
+    `${floodNav()}
+<main>
+<h1>Contacto</h1>
+<form id="contact">
+<label for="email">Correo</label><input id="email" name="email" type="email" required>
+<label for="message">Mensaje</label><textarea id="message" name="message" required></textarea>
+<button type="submit">Enviar</button>
+</form>
+<p id="status"></p>
+</main>
+<script>
+document.getElementById('contact').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = JSON.stringify({ email: document.getElementById('email').value, message: document.getElementById('message').value });
+  try {
+    await fetch('/flood/api/contact', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    document.getElementById('status').textContent = 'enviado';
+  } catch {
+    document.getElementById('status').textContent = 'error';
+  }
+});
+</script>`,
+  );
+}
+
 function simplePage(title: string): string {
   return page(title, `<main><h1>${title}</h1></main>`);
 }
@@ -528,6 +623,25 @@ export function startFixtureServer(): Promise<FixtureServer> {
           if (note) return sendHtml(res, simplePage(`Nota ${note.title}`));
         }
       }
+
+      if (method === 'GET' && p === '/robots.txt') {
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('User-agent: *\nDisallow: /flood/private\n');
+        return;
+      }
+      if (method === 'GET' && p === '/flood/') return sendHtml(res, floodHomePage());
+      if (method === 'GET' && p === '/flood/products') return sendHtml(res, floodProductsPage());
+      const floodProduct = /^\/flood\/products\/(\d+)$/.exec(p);
+      if (method === 'GET' && floodProduct) return sendHtml(res, floodProductPage(floodProduct[1]!));
+      if (method === 'GET' && p === '/flood/contact') return sendHtml(res, floodContactPage());
+      if (method === 'GET' && p === '/flood/private') return sendHtml(res, simplePage('Privado'));
+      if (method === 'GET' && p === '/flood/logout') return sendHtml(res, simplePage('Adiós'));
+      if (method === 'GET' && p === '/flood/api/me') return sendJson(res, { user: /seeded=1/.test(req.headers.cookie ?? '') ? 'seeded' : 'anon' });
+      if (method === 'GET' && p === '/flood/api/offers') return sendJson(res, { offers: [1, 2, 3] });
+      if (method === 'GET' && p === '/flood/api/offers/claim') return sendJson(res, { ok: true });
+      if (method === 'GET' && p === '/flood/api/products') return sendJson(res, { items: [] });
+      if (method === 'GET' && /^\/flood\/api\/orders\/\d+$/.test(p)) return sendJson(res, { id: p.split('/').pop() });
+      if (method === 'POST' && p === '/flood/api/contact') return sendJson(res, { ok: true });
 
       if (method === 'GET' && p === '/record') return sendHtml(res, recordPage());
       if (method === 'GET' && p === '/record/done') return sendHtml(res, recordDonePage());

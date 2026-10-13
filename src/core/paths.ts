@@ -34,6 +34,22 @@ export function flowsDir(): string {
   return userFlowsDir();
 }
 
+/** Generated maps of `rastro flood`, one directory per flood name. Under
+ * `rastroHome()`, not next to the flows: a map is output, rebuilt by running
+ * the flood again, and it names the worker sessions whose traces it cites. */
+export function floodsDir(): string {
+  return join(rastroHome(), 'floods');
+}
+
+const FLOOD_NAME = /^[A-Za-z0-9_-]{1,40}$/;
+
+export function floodDir(name: string): string {
+  if (!FLOOD_NAME.test(name)) {
+    throw new RastroError(`invalid flood name "${name}"`, 'use up to 40 letters, digits, _ or -');
+  }
+  return join(floodsDir(), name);
+}
+
 /** The user-level flows directory, whether or not a project one exists. */
 export function userFlowsDir(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');

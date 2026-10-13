@@ -35,7 +35,7 @@ level is reached or the budget runs out.
   it, it never left — so the map still shows the endpoint a button would call.
   Elements whose name looks destructive or session-ending (logout, delete,
   pay, unsubscribe…) are listed but never activated unless `--include`.
-- **The map.** `.rastro/floods/<name>/map.json` (full graph) and `map.md`
+- **The map.** `~/.local/share/rastro/floods/<name>/map.json` (full graph) and `map.md`
   (compact, token-budgeted): states, the elements in each, the edges between
   states, and an **endpoint index** — every request template (method + path
   with ids normalised) with statuses, content type, which elements trigger it
@@ -43,11 +43,13 @@ level is reached or the budget runs out.
 - **Digging in.** Every action keeps its id in its worker's trace, so the
   existing `effects`, `request --curl`, `snapshot` work on it
   (`rastro -s flood-<name>-w2 request r31 --curl`). `rastro flood show
-  <name> [endpoint|state|element]` resolves those for the agent, and
+  <name> [S#|E#]` resolves those for the agent, and
   `rastro flood resume <name> --from <state> --depth +2` floods one branch
   deeper on demand.
-- MCP: `rastro_flood_start`, `rastro_flood_status`, `rastro_flood_map` (levels:
-  summary → endpoints → one state / one endpoint with request detail).
+- `--detach`, `flood status|stop|list`. MCP: `rastro_flood_start` (always
+  detached), `rastro_flood_status`, `rastro_flood_map` (overview, or one state
+  / one endpoint with its drill-in ids), `rastro_flood_resume`,
+  `rastro_flood_stop`.
 
 ## Non-goals
 

@@ -30,7 +30,9 @@ export interface SessionHooks {
   onTabClose(tabId: string): void;
   onDialog(tabId: string, kind: string, message: string, handled: 'accepted' | 'dismissed'): void;
   onDownload(tabId: string, filename: string, path: string, size: number | undefined): void;
-  onBlockedWrite(tabId: string, method: string, url: string, host: string): void;
+  /** `body` and `contentType` are what the browser built for the aborted
+   * request, when it exposes them; they never left the browser. */
+  onBlockedWrite(tabId: string, method: string, url: string, host: string, body?: string, contentType?: string): void;
   onCrash(tabId: string): void;
   /**
    * Best-effort sighting of every context-wide request as Playwright's own
@@ -642,7 +644,9 @@ export class Session {
         return;
       }
 
-      this.safeHook(() => this.hooks.onBlockedWrite(resolvedTabId, method, request.url(), host));
+      const blockedBody = request.postData() ?? undefined;
+      const contentType = request.headers()['content-type'];
+      this.safeHook(() => this.hooks.onBlockedWrite(resolvedTabId, method, request.url(), host, blockedBody, contentType));
       await route.abort('blockedbyclient');
     });
   }

@@ -125,6 +125,13 @@ export const USAGE: Record<string, string> = {
   'routine list': 'rastro routine list',
   'routine show': 'rastro routine show <name>',
   'routine run': 'rastro routine run <name> [--param k=v ...] [--engine auto|browser|http]',
+  flood:
+    'rastro flood <url> [--name n] [--workers 2] [--depth 3] [--budget 300] [--time 10m] [--rate 2] [--concurrency 2] [--skip a,b] [--include a,b] [--ignore-robots] [--no-fill] [--md-budget 4000] [--quiet-ms n] [--timeout-ms n] [--detach] | rastro flood status|show|resume|stop|list',
+  'flood status': 'rastro flood status [name]',
+  'flood show': 'rastro flood show <name> [S#|E#] [--md-budget n]',
+  'flood resume': 'rastro flood resume <name> [--from S#] [--depth n|+n] [--budget n] [--time 10m] [--workers n] [--detach]',
+  'flood stop': 'rastro flood stop <name>',
+  'flood list': 'rastro flood list',
   profiles: 'rastro profiles',
   profile: 'rastro profile [show] | rastro profile use <browser[:profile]> [--allow-write h1,h2] | rastro profile use rastro',
   status: 'rastro status',
@@ -143,6 +150,7 @@ commands:
   console, cookies, storage, tabs, eval, replay, export
   record start|stop, flow save|run|link|emit|export|import
   routine list|show|run
+  flood <url>, flood status|show|resume|stop|list
   secret set|list|rm
   profiles, profile [show|use]
   status, close, kill, mcp
