@@ -579,6 +579,12 @@ Delegate a multi-step goal:
 /navegador Log in with user@example.com | password and verify dashboard access
 ```
 
+Map a whole site and ask about it:
+
+```
+/navegador Map https://shop.test with a flood and list the endpoints that write
+```
+
 MCP tools in Claude Code:
 
 ```bash

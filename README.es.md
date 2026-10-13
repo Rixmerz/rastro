@@ -424,6 +424,11 @@ Delegación para multi-paso:
 /navegador Log in with user@example.com | password and verify dashboard access
 ```
 
+Mapear un sitio entero y preguntar sobre él:
+```
+/navegador Mapea https://shop.test con un flood y lista los endpoints que escriben
+```
+
 Investigación MCP en Claude Code:
 ```bash
 claude mcp add rastro
